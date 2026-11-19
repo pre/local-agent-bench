@@ -8,7 +8,7 @@ from fake_llama import KEY, FakeLlama
 from llm_eval import cli, probe
 from runfiles import memory
 from test_cli import FakeSampler, fake, run  # noqa: F401  (fixture)
-from test_trial import root  # noqa: F401  (fixture)
+from test_trial import remote_root, root  # noqa: F401  (fixture)
 
 BASIC = ["plain", "system_in_middle", "tool_call", "tool_round_trip"]
 
@@ -217,6 +217,33 @@ def test_resume_adds_the_image_to_a_run_that_an_older_gate_stopped(root, fake, l
     info = json.loads((out / "run.json").read_text())
     assert info["image"] and info["claude_code_version"]
     assert (out / "probes-2" / "protocol.json").exists()
+
+
+def test_probe_error_stops_only_its_configuration(root, fake, llama, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "DEFAULT_OUT", root / "evidence")
+    bad = FakeLlama()
+    bad.state.system_in_middle = "keep"
+    bad.state.fail["/tokenize"] = (500, "no tokenizer")
+    (root / "d.toml").write_text((root / "c.toml").read_text().replace(llama.url, bad.url)
+                                 .replace('"local-test"', '"broken"'))
+    try:
+        code = run(root, "--config", str(root / "d.toml"), "--config", str(root / "c.toml"), "--probe", "speed",
+                   "--probe-target", "1000")
+    finally:
+        bad.stop()
+
+    assert code == 1
+    assert "broken: /tokenize: HTTP 500" in capsys.readouterr().err
+    assert len(fake.of_kind("agent")) == 1
+
+
+def test_probe_with_a_remote_configuration_stops_before_a_server_starts(remote_root, fake, capsys):
+    code = run(remote_root, "--config", str(remote_root / "c.toml"), "--config", str(remote_root / "remote.toml"),
+               "--probe", "protocol")
+
+    assert code == 2
+    assert "--probe works only with a local server" in capsys.readouterr().err
+    assert fake.calls == []
 
 
 def test_probe_target_needs_probe(root, fake, capsys):

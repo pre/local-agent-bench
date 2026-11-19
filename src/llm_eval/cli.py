@@ -126,8 +126,14 @@ class RunPlan:
 def plan_runs(args: argparse.Namespace) -> list[RunPlan]:
     if args.probe_targets and args.probe not in ("speed", "all"):
         raise ConfigError("--probe-target works only with --probe speed or --probe all")
-    if args.resume:
-        return [resume_plan(args)]
+    plans = [resume_plan(args)] if args.resume else new_plans(args)
+    remote = [plan.config.name for plan in plans if plan.config.server.mode == "remote"]
+    if args.probe and remote:
+        raise ConfigError(f"--probe works only with a local server, not with server.mode 'remote': {', '.join(remote)}")
+    return plans
+
+
+def new_plans(args: argparse.Namespace) -> list[RunPlan]:
     if args.out and len(args.configs) > 1:
         raise ConfigError("--out works only with one --config")
     if args.out and (args.out / "run.json").exists():
@@ -172,8 +178,8 @@ def selfcheck_plans(podman, plans: list[RunPlan], scratch: Path) -> bool:
 
 
 def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> bool:
-    """Start the server, run the trials, stop the server. Return False on a server error
-    or a stop of the probe gate."""
+    """Start the server, run the trials, stop the server. Return False on a server error,
+    a probe error or a stop of the probe gate."""
     run_id = plan.run_id or make_run_id(plan.config.name)
     out_dir = plan.out_dir or DEFAULT_OUT / run_id
     print(f"run {run_id}: {out_dir}")
@@ -187,7 +193,7 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
             if args.probe and not probe_run(ctx, args.probe, args.probe_targets):
                 return False
             results = execute_run(ctx, plan.tasks, plan.reps, run_info)
-    except ServerError as e:
+    except (ServerError, probe.ProbeError) as e:
         print(f"llm-eval: {plan.config.name}: {e}", file=sys.stderr)
         return False
     except KeyboardInterrupt:

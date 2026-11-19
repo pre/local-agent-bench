@@ -503,6 +503,8 @@ When a case fails the gate two times, the harness does not run the speed probe a
 
 The reason tells if trials ran: "no trials ran", or on a resumed run "no more trials ran (N of M trials have a result of an earlier start)". `--resume` removes the `probe_gate` key of an earlier start, and a new gate stop writes it again. `--resume --probe` keeps the probe files of the earlier start: it moves `probes/` to `probes-1/` (the next free number), and the new files go to `probes/`.
 
+A probe error (for example HTTP 500 from `/tokenize`) stops only that configuration, the same as a server error. `--probe` with a remote configuration (`mode = "remote"`) stops before a server starts, with a message: the probes need a local llama-server.
+
 ### Probe command
 
 `probe` sends requests from the host directly to the server URL of the configuration, with the key of `api_key_file`. It does not use Claude Code or a container. The results go to `<out>/probes/speed.json` and `<out>/probes/protocol.json`. The default `<out>` is `~/daybook-evidence/local-llm/eval/probe-<UTC time>-<configuration>/`. `report <out>` shows the probe results.
