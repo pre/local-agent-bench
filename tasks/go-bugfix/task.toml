@@ -1,0 +1,7 @@
+id = "go-bugfix"
+title = "Correct the duration parser"
+category = "bugfix"
+language = "go"
+quick = true
+timeout_s = 1800
+max_turns = 60
