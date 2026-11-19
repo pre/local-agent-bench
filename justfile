@@ -38,6 +38,10 @@ selfcheck *tasks:
 run config *args:
     uv run llm-eval run --config {{config}} {{args}}
 
+# Continue an interrupted run: just resume ~/daybook-evidence/local-llm/eval/<run-id>
+resume run_dir *args:
+    uv run llm-eval run --resume {{run_dir}} {{args}}
+
 # Run the unit tests with coverage
 test *args:
     uv run pytest --cov=llm_eval --cov-report=term-missing {{args}}
