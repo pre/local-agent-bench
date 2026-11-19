@@ -1,0 +1,57 @@
+# Agent image of llm-eval. The same image runs the agent (Claude Code) and the hidden check.
+# Build it with "just image". The base images are pinned by digest, so a rebuild gives the
+# same Go, Rust and Claude Code. Debian packages come from trixie and can get security updates.
+
+ARG RUST_IMAGE=docker.io/library/rust@sha256:3ddd9771c00ed2c214d75ba497ad28691ebeaf2279476068dd191cf39b4be033
+ARG GO_IMAGE=docker.io/library/golang@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf
+
+FROM ${RUST_IMAGE} AS rust
+
+# golang:1.27 (Go 1.27.4) on Debian 13 trixie. It has gcc (for -race), git and Python 3.13.
+FROM ${GO_IMAGE}
+
+ARG YQ_VERSION=v4.54.3
+ARG YQ_SHA256=129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973
+ARG CLAUDE_VERSION
+ARG CLAUDE_SHA256
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends jq ripgrep shellcheck socat python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Rust stable from the pinned rust image (same Debian release, same glibc).
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+
+RUN curl -fsSL -o /usr/local/bin/yq \
+      "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+ && echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c - \
+ && chmod 755 /usr/local/bin/yq
+
+# "just image" mounts the Claude Code binary of the host at /run/claude-bin.
+RUN test -n "${CLAUDE_VERSION}" \
+ && echo "${CLAUDE_SHA256}  /run/claude-bin" | sha256sum -c - \
+ && install -m 755 /run/claude-bin /usr/local/bin/claude
+
+# The harness runs the containers with --userns=keep-id:uid=1000,gid=1000. The host user
+# becomes "eval" in the container, so the files in /work belong to the host user.
+RUN groupadd -g 1000 eval \
+ && useradd -m -u 1000 -g 1000 -s /bin/bash eval \
+ && mkdir /work /claude-config /out \
+ && chown eval:eval /work /claude-config /out
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/home/eval/.cargo \
+    PATH=/usr/local/cargo/bin:/usr/local/go/bin:/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    GOTOOLCHAIN=local \
+    GOPROXY=off \
+    GOSUMDB=off \
+    CLAUDE_CONFIG_DIR=/claude-config \
+    DISABLE_AUTOUPDATER=1
+
+LABEL org.opencontainers.image.title="llm-eval-agent" \
+      llm-eval.claude-code.version="${CLAUDE_VERSION}" \
+      llm-eval.yq.version="${YQ_VERSION}"
+
+USER eval
+WORKDIR /work
