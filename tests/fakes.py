@@ -64,7 +64,7 @@ class FakePodman:
             return 0, json.dumps([info])
         if command == "logs":
             return 0, self.server_log
-        if command == "stop":
+        if command in ("stop", "kill"):
             container["running"] = False
             return 0, ""
         if command == "rm":

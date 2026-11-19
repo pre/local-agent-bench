@@ -259,6 +259,9 @@ SERVER_LABEL = "llm-eval.role=server"
 GPU_ARGS = ["--runtime", "crun", "--device", "/dev/kfd", "--device", "/dev/dri/renderD128",
             "--group-add", "keep-groups", "--security-opt", "seccomp=unconfined"]
 STOP_TIMEOUT_S = 60
+# A model can load about 3 GiB of GTT each second: read GTT more often than /health.
+GTT_POLL_S = 0.2
+GTT_POLLS_PER_HEALTH_POLL = 5
 SHARD = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$")
 
 
@@ -417,12 +420,11 @@ class ManagedServer(ExternalServer):
         return used
 
     def _wait_until_healthy(self, gtt_total: int) -> int:
-        """Poll /health each second. Return the peak of GTT used during the wait."""
+        """Poll /health each second and GTT used each 0.2 s. Return the peak of GTT used during the wait."""
         timeout = self.cfg.managed.start_timeout_s
         deadline = time.monotonic() + timeout
-        peak = 0
+        peak = self._check_gtt_margin(gtt_total)
         while True:
-            peak = max(peak, self._check_gtt_margin(gtt_total))
             try:
                 self.check_health()
                 return peak
@@ -434,14 +436,18 @@ class ManagedServer(ExternalServer):
                 raise ServerError(f"{MANAGED_CONTAINER} stopped during the start. The end of its log:\n{log}")
             if time.monotonic() >= deadline:
                 raise ServerError(f"{MANAGED_CONTAINER} is not healthy after {timeout} s: {problem}")
-            self.sleep(1)
+            for _ in range(GTT_POLLS_PER_HEALTH_POLL):
+                self.sleep(GTT_POLL_S)
+                peak = max(peak, self._check_gtt_margin(gtt_total))
 
     def _check_gtt_margin(self, total: int) -> int:
-        """Stop the start before a full GTT stops the desktop. Return GTT used."""
+        """Kill the server before a full GTT stops the desktop: a stop with a timeout is too slow.
+        The caller then removes the container. Return GTT used."""
         used, margin = self.gtt_used(), self.cfg.managed.gtt_min_margin_mib
         if total - used < margin:
+            self.podman.call(["kill", "-s", "KILL", MANAGED_CONTAINER])
             raise ServerError(f"GTT used is {used} MiB of {total} MiB during the start of {MANAGED_CONTAINER}, "
-                              f"less free than server.gtt_min_margin_mib = {margin} MiB. The harness stopped "
+                              f"less free than server.gtt_min_margin_mib = {margin} MiB. The harness killed "
                               "the server: the model and its context are too large for the free GTT.")
         return used
 

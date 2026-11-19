@@ -73,11 +73,12 @@ def write_config(repo: Path, url: str | None = None, timeout: int = 5, **replace
     return path
 
 
-def managed(repo, podman, gtt_mib=500, replace=False, gtt_used=None, gtt_total_mib=100000, **kw) -> ManagedServer:
+def managed(repo, podman, gtt_mib=500, replace=False, gtt_used=None, gtt_total_mib=100000, sleep=None,
+            **kw) -> ManagedServer:
     cfg = load_config(write_config(repo, **kw))
     return open_server(cfg.server, repo / "scratch", podman=podman, root=repo, out_dir=repo / "run",
                        replace=replace, gtt_used=gtt_used or (lambda: gtt_mib), gtt_total=lambda: gtt_total_mib,
-                       sleep=lambda s: None)
+                       sleep=sleep or (lambda s: None))
 
 
 def test_llama_server_args(repo):
@@ -157,16 +158,53 @@ def test_gtt_guard_names_the_running_containers(repo):
     assert not any(c[0] in ("run", "stop", "rm") for c in podman.calls)
 
 
-def test_start_stops_when_gtt_comes_near_its_limit(repo, capsys):
+def test_guard_kills_the_server_between_two_health_polls(repo, capsys):
     podman = FakePodman()
-    readings = iter([500, 60000, 96000])
+    readings = iter([500, 60000, 70000, 80000, 96000])  # before the start, then each 0.2 s
+    sleeps, health_polls = [], []
+    server = managed(repo, podman, gtt_used=lambda: next(readings), timeout=60, sleep=sleeps.append)
+
+    def check_health():
+        health_polls.append(len(sleeps))
+        raise ServerError("loading model")
+
+    server.check_health = check_health
 
     with pytest.raises(ServerError, match=r"GTT used is 96000 MiB of 100000 MiB.*server.gtt_min_margin_mib = 4096"):
-        managed(repo, podman, gtt_used=lambda: next(readings), timeout=60).__enter__()
+        server.__enter__()
 
+    assert health_polls == [0]
+    assert sleeps == [0.2, 0.2, 0.2]
+    commands = [c[0] for c in podman.calls]
+    assert ["kill", "-s", "KILL", NAME] in podman.calls
+    assert commands.index("kill") < commands.index("stop") < commands.index("rm")
     assert NAME not in podman.containers
-    assert ["stop", "-t", "60", NAME] in podman.calls
     assert (repo / "run" / "server.log").exists()
+
+
+def test_health_poll_is_each_second_and_gtt_each_fifth_of_a_second(repo, http_server):
+    podman = FakePodman()
+    readings = iter([500, 1000, 3000, 2000, 1500, 1200, 900, 800])
+    sleeps, health_polls = [], []
+    server = managed(repo, podman, url=http_server, gtt_used=lambda: next(readings), sleep=sleeps.append)
+    real_check = server.check_health
+
+    def check_health():
+        health_polls.append(len(sleeps))
+        if len(health_polls) == 1:
+            raise ServerError("loading model")
+        real_check()
+
+    server.check_health = check_health
+
+    with server:
+        info = server.describe()
+
+    assert health_polls == [0, 5]
+    assert sleeps == [0.2] * 5
+    assert info["gtt_used_load_peak_mib"] == 3000
+    assert info["gtt_used_after_load_mib"] == 800
+    assert not any(c[0] == "kill" for c in podman.calls)
 
 
 def test_gtt_margin_comes_from_the_configuration(repo, http_server):
