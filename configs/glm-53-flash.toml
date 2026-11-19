@@ -36,7 +36,11 @@ gtt_max_used_mib = 6000
 -ctxcp = 4                     # each context checkpoint is about 146 MiB, the default is 32
 --jinja = true
 --reasoning-effort = "high"    # only for a request without an effort, see [client.env]
---temp = 1.0                   # the evaluations of the card: temperature 1.0, top_p 0.95
+# Sampling: the card gives no recommended values. Its evaluations used temperature 1.0
+# with top_p 0.95 (HLE) or top_p 1.0 (Terminal-Bench 2.1 in Claude Code). The card gives
+# no top_k and no min_p, so the llama.cpp defaults apply: top_k 40, min_p 0.05.
+# Not verified: whether the GGUF file has general.sampling keys that change these defaults.
+--temp = 1.0
 --top-p = 0.95
 
 [client]

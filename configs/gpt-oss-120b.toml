@@ -29,8 +29,14 @@ gtt_max_used_mib = 12288
 -ub = 2048
 --jinja = true
 --reasoning-effort = "high"    # only for a request without an effort, see [client.env]
---temp = 1.0                   # OpenAI: temperature 1.0, top_p 1.0
+# Sampling: OpenAI recommends temperature 1.0 and top_p 1.0 and gives no top_k or min_p.
+# --top-k 0 and --min-p 0.0 switch off the llama.cpp defaults (top_k 40, min_p 0.05),
+# so the effective sampling is the sampling of OpenAI. The two flags are an inference
+# of the research, not a published recommendation.
+--temp = 1.0
 --top-p = 1.0
+--top-k = 0
+--min-p = 0.0
 
 [client]
 image = "localhost/llm-eval-agent:latest"

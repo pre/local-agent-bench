@@ -99,7 +99,8 @@ SERVER_FLAGS = "--host 0.0.0.0 --port 8080 --api-key-file /run/api-key -c 131072
 MODELS = {
     "gpt-oss-120b.toml": (
         "-m /models/gpt-oss-120b-F16.gguf --alias gpt-oss-120b"
-        " -ngl all -fa on -lm none -np 1 -b 2048 -ub 2048 --jinja --reasoning-effort high --temp 1.0 --top-p 1.0"),
+        " -ngl all -fa on -lm none -np 1 -b 2048 -ub 2048 --jinja --reasoning-effort high --temp 1.0 --top-p 1.0"
+        " --top-k 0 --min-p 0.0"),
     "qwen3-coder-next.toml": (
         "-m /models/UD-Q8_K_XL/Qwen3-Coder-Next-UD-Q8_K_XL-00001-of-00003.gguf --alias qwen3-coder-next"
         " -ngl all -fa on -lm none -np 1 --jinja --temp 1.0 --top-p 0.95 --top-k 40 --min-p 0.01"),
