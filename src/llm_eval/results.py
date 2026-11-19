@@ -105,14 +105,19 @@ def classify(agent: RunResult, summary: TranscriptSummary, check: CheckResult | 
     return True, None, None
 
 
+MIN_SECRET_LENGTH = 8
+
+
 def secret_values(secret_env: dict[str, str]) -> list[str]:
     """The values to redact: each value of the secret environment, and also the
     value of each "Name: value" line of ANTHROPIC_CUSTOM_HEADERS (a subscription
-    key). The longest value comes first, so it is replaced before its parts."""
+    key). The longest value comes first, so it is replaced before its parts.
+    A value shorter than MIN_SECRET_LENGTH is a placeholder, not a secret: its
+    redaction would change normal text in the trial files."""
     values = set(secret_env.values())
     for line in secret_env.get("ANTHROPIC_CUSTOM_HEADERS", "").splitlines():
         values.add(line.partition(":")[2].strip())
-    return sorted(filter(None, values), key=len, reverse=True)
+    return sorted((v for v in values if len(v) >= MIN_SECRET_LENGTH), key=len, reverse=True)
 
 
 def redact_tree(root: Path, secrets: Iterable[str], replacement: str = "<redacted>") -> int:

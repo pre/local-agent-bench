@@ -164,7 +164,7 @@ Model tiers: `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_{FABLE,OPUS,SONNET,HAIKU}_MOD
 
 - go to podman through its process environment (`-e NAME` without a value), not through its arguments.
 - are not in `run.json`: the configuration has only the profile path and the names.
-- are replaced with `<redacted>` in all files of the trial directory after the trial. For `ANTHROPIC_CUSTOM_HEADERS` the harness also replaces the value of each `Name: value` line (the subscription key). The harness replaces each occurrence, also in the work files. Thus a short value that is also a usual word changes files that contain no secret.
+- are replaced with `<redacted>` in all files of the trial directory after the trial. For `ANTHROPIC_CUSTOM_HEADERS` the harness also replaces the value of each `Name: value` line (the subscription key). The harness replaces each occurrence, also in the work files. A value shorter than 8 characters is a placeholder and is not replaced, because its replacement changes normal text in files that contain no secret.
 
 A local server gives `ANTHROPIC_AUTH_TOKEN` (its API key). A remote endpoint gives no key of its own, so the local key does not go to the gateway.
 

@@ -141,12 +141,20 @@ def test_redact_tree_replaces_each_secret_and_ignores_empty_values(tmp_path):
 
 
 def test_secret_values_add_the_values_of_custom_headers():
-    env = {"ANTHROPIC_API_KEY": "k", "ANTHROPIC_CUSTOM_HEADERS": "Sub-Key: abc123\nOther: x y", "EMPTY": ""}
+    env = {"ANTHROPIC_API_KEY": "key-0123456789", "ANTHROPIC_CUSTOM_HEADERS": "Sub-Key: abc12345\nOther: x y z w",
+           "EMPTY": ""}
 
     values = secret_values(env)
 
-    assert set(values) == {"k", "Sub-Key: abc123\nOther: x y", "abc123", "x y"}
+    assert set(values) == {"key-0123456789", "Sub-Key: abc12345\nOther: x y z w", "abc12345"}
     assert values == sorted(values, key=len, reverse=True)
+
+
+def test_secret_values_leave_out_short_values():
+    # A placeholder such as "dummy" is not a secret, and its redaction would change normal text in the evidence.
+    env = {"ANTHROPIC_API_KEY": "dummy", "ANTHROPIC_CUSTOM_HEADERS": "Sub-Key: 0123456789abcdef"}
+
+    assert secret_values(env) == ["Sub-Key: 0123456789abcdef", "0123456789abcdef"]
 
 
 def test_summarize_reads_models_and_cost(tmp_path):
