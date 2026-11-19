@@ -161,7 +161,7 @@ Consequences:
 | `qwen38-27b.toml` | Qwen3.8-27B dense, Q8_0, MTP layer inside (not verified) | 1 file, 29.0 GB | about 37 GiB (estimate) | Apache 2.0 | Needs the patched chat template of Flash-Next. MTP with no draft file. Check at the first start that the file has the MTP layer |
 | `glm-53-flash.toml` | GLM-5.3 Flash 320.8B-A18B, UD-IQ2_XXS, no MTP | 4 parts, 101.8 GB | about 93 to 95 GiB (estimate) | MIT | At the memory limit: starts only when GTT used is 6000 MiB or less. Published top-1 agreement 76 %. Reports of reasoning that collapses in long sessions |
 
-The four new configurations use `-lm none` (resident load, recommended on Strix Halo), port 8090, context 131072 and the image of `qwen38-base.toml`. The comments of each file give the source of each value. A unit test checks that each flag of each configuration is in the help text of llama-server build 12531 (`tests/llama-server-help-build12531.txt`).
+The four new configurations use `-lm none` (resident load, recommended on Strix Halo), port 8090, context 131072 and the image of `qwen38-base.toml`. The comments of each file give the source of each value. A unit test checks that each flag of each configuration is in the help text of llama-server build 12531 (`tests/llama-server-help-build12531.txt`). When the help text names the values of a flag (for example `-fa`, `-lm`, `-ctk`, `--reasoning-effort`, `--spec-type`), the value must be one of them. A flag with the placeholder `N` also accepts a number. The test also checks that the `model_file` of each new configuration is a file of `download/models.tsv`.
 
 ### Download
 

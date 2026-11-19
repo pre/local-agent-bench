@@ -126,12 +126,24 @@ def test_model_configuration_has_the_flags_of_the_research(name, flags):
     assert config.server.managed.draft is None
 
 
+def download_list() -> set[tuple[str, str]]:
+    """The model and the path of each file of download/models.tsv."""
+    rows = [line.split("\t") for line in (ROOT / "download" / "models.tsv").read_text().splitlines()
+            if not line.startswith("#")]
+    return {(row[0], row[4]) for row in rows}
+
+
 def test_model_directories_follow_the_download_list():
-    listed = {line.split("\t")[0] for line in (ROOT / "download" / "models.tsv").read_text().splitlines()
-              if not line.startswith("#")}
     dirs = {load_config(CONFIGS / name).server.managed.models_dir.name for name in MODELS}
 
-    assert dirs == listed
+    assert dirs == {model for model, _ in download_list()}
+
+
+@pytest.mark.parametrize("name", MODELS)
+def test_model_file_is_a_file_of_the_download_list(name):
+    managed = load_config(CONFIGS / name).server.managed
+
+    assert (managed.models_dir.name, managed.model_file) in download_list()
 
 
 def test_only_glm_needs_a_clean_gpu():
@@ -145,18 +157,83 @@ def test_qwen38_27b_uses_the_patched_template():
     assert load_config(CONFIGS / "qwen38-27b.toml").server.managed.chat_template == "templates/qwen38-flash-next.jinja"
 
 
-def help_flags() -> set[str]:
-    """The flags of `llama-server --help` of the pinned image (build 12531). The
-    flag names are in the first 40 characters of a line."""
-    text = (Path(__file__).parent / "llama-server-help-build12531.txt").read_text()
-    return {flag for line in text.splitlines() if line.startswith("-")
-            for flag in re.findall(r"--?[A-Za-z][\w-]*", line[:40])}
+HELP = (Path(__file__).parent / "llama-server-help-build12531.txt").read_text()
+NUMBER = re.compile(r"-?\d+(\.\d+)?")
+
+
+def help_entries() -> dict[str, tuple[str, str]]:
+    """Each flag of `llama-server --help` of the pinned image (build 12531), with the
+    flag column and the description of its entry. The description starts at column 40.
+    A longer flag column fills its line."""
+    entries, flags = {}, []
+    for line in HELP.splitlines():
+        if line.startswith("-"):
+            head, text = (line[:40], line[40:]) if line[39:40] == " " else (line, "")
+            flags = [token.rstrip(",") for token in head.split() if token.startswith("-")]
+            entries.update((flag, (head, text)) for flag in flags)
+        elif flags:
+            entries.update((flag, (entries[flag][0], f"{entries[flag][1]}\n{line}")) for flag in flags)
+    return entries
+
+
+def allowed_values(head: str, text: str) -> set[str]:
+    """The values that the help entry names: [a|b] or {a,b} or a,b,c in the flag column,
+    "allowed values: a, b", "- a: ..." lines and 'a' in the description."""
+    values = set()
+    for token in head.split()[1:]:
+        if found := re.fullmatch(r"\[([\w|-]+)\]|\{([\w,-]+)\}|([a-z0-9-]+(?:,[a-z0-9-]+)+)", token):
+            values |= set(re.split(r"[|,]", next(group for group in found.groups() if group)))
+    if listed := re.search(r"allowed values: ([^(]+)", text):
+        values |= set(re.findall(r"[\w-]+", listed[1]))
+    values |= set(re.findall(r"^\s+- ([\w+-]+):", text, re.M))
+    return values | set(re.findall(r"'([\w-]+)'", text))
+
+
+def invalid_values(args: dict) -> list[str]:
+    """The flags of args with a value that the help text does not permit. A flag with
+    the placeholder N also permits a number. A comma separated value is a list."""
+    entries, invalid = help_entries(), []
+    for flag, value in args.items():
+        head, text = entries[flag]
+        allowed, numeric = allowed_values(head, text), "N" in head.split()
+        if isinstance(value, bool) or not (allowed or numeric):
+            continue
+        if any(item not in allowed and not (numeric and NUMBER.fullmatch(item)) for item in str(value).split(",")):
+            invalid.append(f"{flag} {value}")
+    return invalid
+
+
+@pytest.mark.parametrize("flag, values", [
+    ("-fa", {"on", "off", "auto"}),
+    ("-lm", {"auto", "none", "mmap", "mlock", "mmap+mlock", "dio"}),
+    ("-ctk", {"f32", "f16", "bf16", "f8_e4m3", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"}),
+    ("--reasoning-effort", {"default", "minimal", "low", "medium", "high", "xhigh", "max"}),
+    ("--spec-type", {"none", "draft-simple", "draft-eagle3", "draft-mtp", "draft-dflash", "draft-dspark",
+                     "draft-dflash2", "draft-lilicorr", "ngram-simple", "ngram-map-k", "ngram-map-k4v",
+                     "ngram-mod", "ngram-cache"}),
+    ("-sm", {"none", "layer", "row", "tensor"}),
+    ("-ngl", {"auto", "all"}),
+    ("--temp", set()),
+])
+def test_help_text_gives_the_values_of_a_flag(flag, values):
+    assert allowed_values(*help_entries()[flag]) == values
+
+
+def test_values_outside_the_help_text_are_invalid():
+    args = {"-fa": "yes", "-lm": "mmap-lock", "-ctk": "q8", "-ctv": "q8_0", "--reasoning-effort": "extreme",
+            "--spec-type": "draft-mtp,mtp", "-ngl": "most", "--top-k": "forty", "--min-p": 0.0,
+            "--jinja": True, "--chat-template-kwargs": '{"reasoning_effort":"low"}'}
+
+    assert invalid_values(args) == ["-fa yes", "-lm mmap-lock", "-ctk q8", "--reasoning-effort extreme",
+                                    "--spec-type draft-mtp,mtp", "-ngl most", "--top-k forty"]
 
 
 @pytest.mark.parametrize("path", sorted(CONFIGS.glob("*.toml")), ids=lambda p: p.name)
-def test_each_configuration_loads_and_uses_known_flags(path):
+def test_each_configuration_loads_and_uses_known_flags_and_values(path):
     config = load_config(path)
+    managed = config.server.managed
 
-    if config.server.managed:
+    if managed:
         flags = {arg for arg in llama_server_args(config.server) if re.fullmatch(r"--?[A-Za-z][\w-]*", arg)}
-        assert flags - help_flags() == set()
+        assert flags - help_entries().keys() == set()
+        assert invalid_values({**managed.args, **(managed.draft.args if managed.draft else {})}) == []
