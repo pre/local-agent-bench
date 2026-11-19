@@ -78,9 +78,42 @@ def _rate(values: list[dict], amount: str, per: str) -> float | None:
     return sum(a for a, _ in pairs) / total if total else None
 
 
-def _extreme(values: list[dict], key: str, pick) -> int | None:
-    found = [v[key] for v in values if v.get(key) is not None]
+def _pick(values: list, pick) -> int | float | None:
+    found = [v for v in values if v is not None]
     return pick(found) if found else None
+
+
+def _extreme(values: list[dict], key: str, pick) -> int | float | None:
+    return _pick([v.get(key) for v in values], pick)
+
+
+def _server_info(run: Run) -> dict:
+    return run.info.get("server") or {}
+
+
+def _memories(run: Run) -> list[dict]:
+    """The memory summaries of the trials and of the probes of a run."""
+    return _observed(run.results, "memory") + ([run.probes["memory"]] if "memory" in run.probes else [])
+
+
+def _gtt_peak(run: Run) -> int | None:
+    """The peak of GTT used during the server start, the probes and the trials of a run."""
+    peaks = [m["gtt_used_peak_mib"] for m in _memories(run)] + [_server_info(run).get("gtt_used_load_peak_mib")]
+    return _pick(peaks, max)
+
+
+def _gtt_after_load(run: Run) -> int | None:
+    """Older runs do not have gtt_used_after_load_mib: use GTT used at the start of the first trial."""
+    server = _server_info(run)
+    if "gtt_used_after_load_mib" in server:
+        return server["gtt_used_after_load_mib"]
+    trials = sorted((t for t in run.results if t.get("memory")), key=lambda t: t["started_at"])
+    return trials[0]["memory"]["gtt_used_start_mib"] if trials else None
+
+
+def _gtt_margin(run: Run) -> int | None:
+    total, peak = _server_info(run).get("gtt_total_mib"), _gtt_peak(run)
+    return None if total is None or peak is None else total - peak
 
 
 @dataclass
@@ -89,6 +122,7 @@ class ConfigStats:
     sha256: str
     trials: list[dict] = field(default_factory=list)
     label: str = ""
+    runs: list[Run] = field(default_factory=list)
 
     @cached_property
     def counted(self) -> list[dict]:
@@ -144,16 +178,55 @@ class ConfigStats:
         return _rate(_observed(self.trials, "server"), "draft_accepted", "draft_generated")
 
     @property
+    def remote(self) -> bool:
+        return any(_server_info(run).get("mode") == "remote" for run in self.runs)
+
+    @property
+    def memories(self) -> list[dict]:
+        return [m for run in self.runs for m in _memories(run)]
+
+    @cached_property
+    def peak_run(self) -> Run | None:
+        """The run with the highest GTT peak. None for a remote endpoint: the local GPU is not its GPU."""
+        runs = [run for run in self.runs if _gtt_peak(run) is not None]
+        return None if self.remote or not runs else max(runs, key=_gtt_peak)
+
+    @property
     def gtt_peak_mib(self) -> int | None:
-        return _extreme(_observed(self.trials, "memory"), "gtt_used_peak_mib", max)
+        return _gtt_peak(self.peak_run) if self.peak_run else None
+
+    @property
+    def gtt_before_start_mib(self) -> int | None:
+        return _server_info(self.peak_run).get("gtt_used_before_start_mib") if self.peak_run else None
+
+    @property
+    def gtt_after_load_mib(self) -> int | None:
+        return _gtt_after_load(self.peak_run) if self.peak_run else None
+
+    @property
+    def model_gtt_mib(self) -> int | None:
+        before = self.gtt_before_start_mib
+        return None if before is None else self.gtt_peak_mib - before
+
+    @property
+    def gtt_total_mib(self) -> int | None:
+        return None if self.remote else _pick([_server_info(run).get("gtt_total_mib") for run in self.runs], max)
+
+    @property
+    def gtt_margin_mib(self) -> int | None:
+        return None if self.remote else _pick([_gtt_margin(run) for run in self.runs], min)
 
     @property
     def mem_available_min_mib(self) -> int | None:
-        return _extreme(_observed(self.trials, "memory"), "mem_available_min_mib", min)
+        return _extreme(self.memories, "mem_available_min_mib", min)
 
     @property
     def swap_free_min_mib(self) -> int | None:
-        return _extreme(_observed(self.trials, "memory"), "swap_free_min_mib", min)
+        return _extreme(self.memories, "swap_free_min_mib", min)
+
+    @property
+    def psi_full_max(self) -> float | None:
+        return _extreme(self.memories, "psi_full_avg10_max", max)
 
 
 def config_stats(runs: list[Run]) -> list[ConfigStats]:
@@ -163,7 +236,10 @@ def config_stats(runs: list[Run]) -> list[ConfigStats]:
     for run in runs:
         for t in run.results:
             key = (t["config"]["name"], t["config"]["sha256"])
-            groups.setdefault(key, ConfigStats(*key)).trials.append(t)
+            stats = groups.setdefault(key, ConfigStats(*key))
+            stats.trials.append(t)
+            if run not in stats.runs:
+                stats.runs.append(run)
     names = Counter(name for name, _ in groups)
     for stats in groups.values():
         stats.label = f"{stats.name} @{stats.sha256[:8]}" if names[stats.name] > 1 else stats.name
@@ -234,8 +310,35 @@ def _config_table(rows: list[ConfigStats]) -> list[str]:
             lines += ["", f"Configuration `{name}` has {len(shas)} different SHA-256 values."
                       " Each value is a separate row."]
     lines += ["", "Pass rate and mean score do not include harness errors. Median wall time is for the counted"
-              " trials, total wall time is for all trials. Speed and memory values are for all trials."]
+              " trials, total wall time is for all trials. Speed values are for all trials. Memory values are for"
+              " all trials and the probes. GTT peak also includes the server start, see \"Memory\"."]
     return lines
+
+
+def _memory_table(rows: list[ConfigStats]) -> list[str]:
+    header = ["Configuration", "GTT limit GiB", "GTT before start GiB", "GTT after load GiB", "GTT peak GiB",
+              "Model GTT GiB", "GTT margin GiB", "Min MemAvailable GiB", "Min SwapFree GiB", "Max PSI full avg10"]
+    body = [[s.label, _gib(s.gtt_total_mib), _gib(s.gtt_before_start_mib), _gib(s.gtt_after_load_mib),
+             _gib(s.gtt_peak_mib), _gib(s.model_gtt_mib), _gib(s.gtt_margin_mib), _gib(s.mem_available_min_mib),
+             _gib(s.swap_free_min_mib), _num(s.psi_full_max, 2)] for s in rows]
+    text = ["The harness measured all values on the machine of the run. It read GTT used and the host memory each"
+            " second during the server start, the probes and the trials. GTT limit is the GTT total of the kernel."
+            " GTT before start is the GTT of the other programs. GTT peak is the highest GTT used. Model GTT is"
+            " GTT peak minus GTT before start: the GTT of the server with its model and context. GTT margin is"
+            " GTT limit minus GTT peak."]
+    notes = [
+        (any(s.peak_run and "gtt_used_after_load_mib" not in _server_info(s.peak_run) for s in rows),
+         "A run without the value GTT after load gives the GTT used at the start of its first trial."),
+        (any(_server_info(run).get("mode") == "external" for s in rows for run in s.runs),
+         "The harness does not start an external server, thus GTT before start and Model GTT are n/a."),
+        (any(s.remote for s in rows),
+         "A remote configuration does not use the local GPU memory, thus its GTT values are n/a."),
+        (any(len(s.runs) > 1 for s in rows),
+         "When a row has more than one run, GTT limit and GTT peak are the maximum and GTT margin is the minimum"
+         " of the runs. GTT before start and GTT after load come from the run with the highest GTT peak."),
+    ]
+    text += [note for applies, note in notes if applies]
+    return ["## Memory", ""] + _table(header, body) + ["", " ".join(text)]
 
 
 def _matrix_cell(trials: list[dict]) -> str:
@@ -323,7 +426,7 @@ def _protocol_probe(protocol: dict) -> list[str]:
 def _probes(runs: list[Run]) -> list[str]:
     lines = []
     for run in runs:
-        if not run.probes:
+        if not run.probes.keys() & {"speed", "protocol"}:
             continue
         lines += ["", f"## Probes: {run.id}"]
         if "speed" in run.probes:
@@ -337,7 +440,8 @@ def render_report(runs: list[Run]) -> str:
     lines = ["# Evaluation report", ""] + _runs_section(runs)
     rows = config_stats(runs)
     if rows:
-        lines += [""] + _config_table(rows) + [""] + _matrix(rows) + [""] + _failures(rows) + [""] + _limits(rows)
+        lines += [""] + _config_table(rows) + [""] + _memory_table(rows) + [""] + _matrix(rows) + [""] + \
+            _failures(rows) + [""] + _limits(rows)
     else:
         lines += ["", "No trial results."]
     lines += _probes(runs)

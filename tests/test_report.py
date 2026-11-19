@@ -229,3 +229,93 @@ def test_report_of_a_probe_directory_only(tmp_path):
 
     assert "No trial results." in text
     assert "## Probes" in text
+
+
+MANAGED = {"mode": "managed", "gtt_used_before_start_mib": 2048, "gtt_used_after_load_mib": 81920,
+           "gtt_used_load_peak_mib": 82944, "gtt_total_mib": 112640}
+
+
+def memory_row(text: str, label: str) -> list[str]:
+    section = text.split("## Memory", 1)[1].split("\n## ", 1)[0]
+    line = next(line for line in section.splitlines() if line.startswith(f"| {label} |"))
+    return [cell.strip() for cell in line.strip("|").split("|")][1:]
+
+
+def test_gtt_peak_includes_the_probes_and_the_server_start(tmp_path):
+    trials = [trial("t1", memory=memory(84000, 30000, 8000))]
+    probed = load_run(write_run(tmp_path / "a", trials, server=MANAGED,
+                                probe_memory=memory(90000, 20000, 7000, psi_full=2.5)))
+    loaded = load_run(write_run(tmp_path / "b", [trial("t1", name="c2", sha=SHA_B)],
+                                server={**MANAGED, "gtt_used_load_peak_mib": 95000}))
+
+    a, b = sorted(config_stats([probed, loaded]), key=lambda s: s.label)
+
+    assert (a.gtt_peak_mib, a.mem_available_min_mib, a.swap_free_min_mib, a.psi_full_max) == (90000, 20000, 7000, 2.5)
+    assert b.gtt_peak_mib == 95000
+
+
+def test_memory_section_of_a_managed_run(tmp_path):
+    trials = [trial("t1", memory=memory(83968, 30720, 8192, psi_full=1.25))]
+    run = load_run(write_run(tmp_path / "r", trials, server=MANAGED, probe_memory=memory(86016, 40960, 9216)))
+
+    text = render_report([run])
+
+    assert text.index("## Configurations") < text.index("## Memory") < text.index("## Tasks")
+    assert memory_row(text, "c1") == ["110.0", "2.0", "80.0", "84.0", "82.0", "26.0", "30.0", "8.0", "1.25"]
+    assert "on the machine of the run" in text
+    assert "## Probes" not in text
+    assert "| c1 | 1 |" in text and "| 84.0 |" in text.split("## Memory")[0]
+
+
+def test_memory_section_of_an_old_run_uses_the_first_trial(tmp_path):
+    trials = [trial("t1", memory=memory(88162, 16809, 569, gtt_start=88068), started="2026-11-19T20:06:17+00:00"),
+              trial("t2", memory=memory(88073, 27195, 2000, gtt_start=87794), started="2026-11-19T18:45:02+00:00")]
+    old = {"mode": "managed", "gtt_used_before_start_mib": 2441}
+
+    text = render_report([load_run(write_run(tmp_path / "r", trials, server=old))])
+
+    assert memory_row(text, "c1")[:6] == ["n/a", "2.4", "85.7", "86.1", "83.7", "n/a"]
+    assert "first trial" in text
+
+
+def test_memory_section_of_an_external_server(tmp_path):
+    trials = [trial("t1", memory=memory(51200, 30720, 8192, gtt_start=50176))]
+    external = {"mode": "external", "url": "http://127.0.0.1:8080", "container": None, "gtt_total_mib": 112640}
+
+    text = render_report([load_run(write_run(tmp_path / "r", trials, server=external))])
+
+    assert memory_row(text, "c1")[:6] == ["110.0", "n/a", "49.0", "50.0", "n/a", "60.0"]
+    assert "external server" in text
+
+
+def test_remote_configuration_has_no_gtt_values(tmp_path):
+    trials = [trial("t1", memory=memory(88064, 30720, 8192))]
+    remote = {"mode": "remote", "url": "https://gateway.example.org", "model": "m", "agent_network": "proxy"}
+
+    run = load_run(write_run(tmp_path / "r", trials, server=remote))
+    (stats,) = config_stats([run])
+    text = render_report([run])
+
+    assert stats.gtt_peak_mib is None
+    assert memory_row(text, "c1") == ["n/a"] * 6 + ["30.0", "8.0", "0.10"]
+    config_row = next(line for line in text.splitlines() if line.startswith("| c1 | 1 |"))
+    assert "86.0" not in config_row and "| n/a | 30.0 | 8.0 |" in config_row
+    assert "does not use the local GPU memory" in text
+
+
+def test_merged_runs_take_before_and_after_from_the_run_with_the_highest_peak(tmp_path):
+    low = load_run(write_run(tmp_path / "a", [trial("t1", memory=memory(83968, 30720, 8192))], server=MANAGED))
+    high_server = {**MANAGED, "gtt_used_before_start_mib": 4096, "gtt_used_after_load_mib": 86016,
+                   "gtt_total_mib": 102400}
+    high = load_run(write_run(tmp_path / "b", [trial("t2", memory=memory(88064, 20480, 4096))], server=high_server))
+
+    text = render_report([low, high])
+
+    assert memory_row(text, "c1") == ["110.0", "4.0", "84.0", "86.0", "82.0", "14.0", "20.0", "4.0", "0.10"]
+    assert "highest GTT peak" in text
+
+
+def test_memory_section_without_memory_values(tmp_path):
+    text = render_report([load_run(write_run(tmp_path / "r", [trial("t1")]))])
+
+    assert memory_row(text, "c1") == ["n/a"] * 9
