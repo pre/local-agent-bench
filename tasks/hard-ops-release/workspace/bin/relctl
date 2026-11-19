@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# relctl: install release packages on this host.
+# First version: install and status only. See README.md.
+
+CONFIG=${RELCTL_CONFIG:-/etc/relctl/relctl.conf}
+if [ "$1" = "--config" ]; then
+    CONFIG=$2
+    shift 2
+fi
+
+if [ -f $CONFIG ]; then
+    . $CONFIG
+fi
+
+BASE=${RELCTL_BASE:-$base_dir}
+KEEP=${keep:-5}
+
+log() {
+    echo "relctl: $*" >&2
+}
+
+install_package() {
+    pkg=$1
+    sum=$(sha256sum $pkg | cut -d' ' -f1)
+    if [ "$sum" != "$(cat $pkg.sha256 | cut -d' ' -f1)" ]; then
+        log "checksum mismatch"
+        exit 1
+    fi
+
+    mkdir -p $BASE/releases $BASE/shared
+    tmp=$BASE/releases/tmp
+    rm -rf $tmp
+    mkdir $tmp
+    tar -xzf $pkg -C $tmp
+    version=$(cat $tmp/VERSION)
+    if [ -d $BASE/releases/$version ]; then
+        log "version $version is already installed"
+        rm -rf $tmp
+        exit 0
+    fi
+    mv $tmp $BASE/releases/$version
+
+    for p in $shared; do
+        rm -rf $BASE/releases/$version/$p
+        ln -s $BASE/shared/$p $BASE/releases/$version/$p
+    done
+
+    ln -sfn releases/$version $BASE/current
+
+    if [ -n "$health_cmd" ]; then
+        if ! (cd $BASE/releases/$version && $health_cmd); then
+            log "health check failed"
+            exit 1
+        fi
+    fi
+
+    echo "$(date) install $version" >> $BASE/history.log
+    log "installed $version"
+
+    # keep the newest releases
+    ls $BASE/releases | sort | head -n -$KEEP | while read old; do
+        rm -rf $BASE/releases/$old
+    done
+}
+
+status() {
+    echo "current: $(readlink $BASE/current)"
+    echo "releases: $(ls $BASE/releases)"
+}
+
+case $1 in
+    install) install_package $2 ;;
+    status) status ;;
+    *)
+        echo "usage: relctl [--config FILE] install PACKAGE | status"
+        exit 1
+        ;;
+esac

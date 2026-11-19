@@ -1,0 +1,471 @@
+#!/usr/bin/env bash
+# relctl: install release packages on this host.
+# The specification is docs/REQUIREMENTS.md (rules R1 to R26).
+set -uo pipefail
+umask 027
+
+readonly DEFAULT_CONFIG=/etc/relctl/relctl.conf
+readonly VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+
+log() {
+    local level=$1
+    shift
+    printf 'relctl: %s: %s\n' "$level" "$*" >&2
+}
+info() { log info "$@"; }
+die() {
+    local code=$1
+    shift
+    log error "$@"
+    exit "$code"
+}
+
+# Command line (R1)
+
+opt_config='' opt_base='' opt_keep='' opt_lock_wait=''
+have_config=false have_base=false have_keep=false have_lock_wait=false
+dry_run=false
+while [ "$#" -gt 0 ]; do
+    case $1 in
+    --config | --base | --keep | --lock-wait)
+        [ "$#" -ge 2 ] || die 2 "option $1 needs a value"
+        case $1 in
+        --config) opt_config=$2 have_config=true ;;
+        --base) opt_base=$2 have_base=true ;;
+        --keep) opt_keep=$2 have_keep=true ;;
+        --lock-wait) opt_lock_wait=$2 have_lock_wait=true ;;
+        esac
+        shift 2
+        ;;
+    --dry-run)
+        dry_run=true
+        shift
+        ;;
+    -*) die 2 "unknown option: $1" ;;
+    *) break ;;
+    esac
+done
+[ "$#" -ge 1 ] || die 2 "usage: relctl [OPTIONS] install PACKAGE | rollback | prune | status"
+command=$1
+shift
+package=
+case $command in
+install)
+    [ "$#" -eq 1 ] || die 2 "usage: relctl [OPTIONS] install PACKAGE"
+    package=$1
+    ;;
+rollback | prune | status)
+    [ "$#" -eq 0 ] || die 2 "command $command takes no arguments"
+    ;;
+*) die 2 "unknown command: $command" ;;
+esac
+
+# Configuration (R4 to R9)
+
+# number VALUE MIN MAX: print the decimal value, or fail when it is not valid.
+number() {
+    [[ $1 =~ ^[0-9]{1,4}$ ]] || return 1
+    local n=$((10#$1))
+    ((n >= $2 && n <= $3)) || return 1
+    printf '%s' "$n"
+}
+
+valid_shared() {
+    local p=$1 name
+    local -a names
+    [ -n "$p" ] || return 1
+    case $p in /* | */) return 1 ;; esac
+    IFS=/ read -r -a names <<<"$p"
+    for name in "${names[@]}"; do
+        case $name in '' | . | ..) return 1 ;; esac
+    done
+    case $p in *//*) return 1 ;; esac
+}
+
+declare -A cfg=()
+shared_paths=()
+
+read_config() {
+    local file=$1 line key value n=0
+    while IFS= read -r line || [ -n "$line" ]; do
+        n=$((n + 1))
+        line=${line#"${line%%[![:blank:]]*}"}
+        line=${line%"${line##*[![:blank:]]}"}
+        [ -n "$line" ] || continue
+        [[ $line == '#'* ]] && continue
+        [[ $line == *=* ]] || die 3 "$file:$n: the line has no '='"
+        key=${line%%=*}
+        value=${line#*=}
+        case $key in
+        base_dir)
+            [[ $value == /* ]] || die 3 "$file:$n: base_dir must be an absolute path"
+            ;;
+        keep)
+            number "$value" 2 50 >/dev/null || die 3 "$file:$n: keep must be a number from 2 to 50"
+            ;;
+        lock_wait)
+            number "$value" 0 600 >/dev/null || die 3 "$file:$n: lock_wait must be a number from 0 to 600"
+            ;;
+        health_timeout)
+            number "$value" 1 3600 >/dev/null || die 3 "$file:$n: health_timeout must be a number from 1 to 3600"
+            ;;
+        health_cmd)
+            if [ -n "$value" ]; then
+                if [[ $value != /* ]] || [ ! -f "$value" ] || [ ! -x "$value" ]; then
+                    die 3 "$file:$n: health_cmd must be the absolute path of an executable file"
+                fi
+            fi
+            ;;
+        shared)
+            valid_shared "$value" || die 3 "$file:$n: shared is not a valid relative path"
+            shared_paths+=("$value")
+            continue
+            ;;
+        *) die 3 "$file:$n: unknown key: $key" ;;
+        esac
+        [ -z "${cfg[$key]+x}" ] || die 3 "$file:$n: the key $key occurs two times"
+        cfg[$key]=$value
+    done <"$file"
+}
+
+if [ "$have_config" = true ]; then
+    config_file=$opt_config
+elif [ -n "${RELCTL_CONFIG:-}" ]; then
+    config_file=$RELCTL_CONFIG
+else
+    config_file=$DEFAULT_CONFIG
+fi
+if [ -f "$config_file" ] && [ -r "$config_file" ]; then
+    read_config "$config_file"
+elif [ "$config_file" != "$DEFAULT_CONFIG" ] || [ -e "$config_file" ]; then
+    die 3 "cannot read the configuration file $config_file"
+fi
+
+# choose OPTION_GIVEN OPTION_VALUE ENV_NAME CONFIG_KEY DEFAULT: print the value of R8.
+choose() {
+    if [ "$1" = true ]; then
+        printf '%s' "$2"
+    elif [ -n "${!3:-}" ]; then
+        printf '%s' "${!3}"
+    elif [ -n "${cfg[$4]+x}" ]; then
+        printf '%s' "${cfg[$4]}"
+    else
+        printf '%s' "$5"
+    fi
+}
+
+base=$(choose "$have_base" "$opt_base" RELCTL_BASE base_dir "")
+[ -n "$base" ] || die 3 "no base dir: use --base, RELCTL_BASE or base_dir"
+[[ $base == /* ]] || die 3 "the base dir must be an absolute path: $base"
+keep=$(number "$(choose "$have_keep" "$opt_keep" RELCTL_KEEP keep 5)" 2 50) ||
+    die 3 "keep must be a number from 2 to 50"
+lock_wait=$(number "$(choose "$have_lock_wait" "$opt_lock_wait" RELCTL_LOCK_WAIT lock_wait 10)" 0 600) ||
+    die 3 "the lock wait must be a number from 0 to 600"
+health_cmd=${cfg[health_cmd]:-}
+health_timeout=$(number "${cfg[health_timeout]:-30}" 1 3600)
+
+releases_dir=$base/releases
+current_link=$base/current
+shared_dir=$base/shared
+staging_dir=$base/.staging
+lock_file=$base/.relctl.lock
+history_file=$base/history.tsv
+health_log=$base/health.log
+
+# State and cleanup
+
+stage=              # staging directory of this install
+new_release=        # release directory that this install made
+switched=false      # this install changed current
+had_current=false   # current existed before this install
+old_target=         # target of current before this install
+child_pid=          # running health check or lock wait
+
+stop_child() {
+    if [ -n "$child_pid" ]; then
+        kill -TERM "$child_pid" 2>/dev/null
+        wait "$child_pid" 2>/dev/null
+        child_pid=
+    fi
+}
+
+# Undo all changes of an install that did not end (R18, R21).
+undo_install() {
+    stop_child
+    if [ "$switched" = true ]; then
+        if [ "$had_current" = true ]; then
+            point_current "$old_target"
+        else
+            rm -f -- "$current_link"
+        fi
+        switched=false
+    fi
+    if [ -n "$new_release" ]; then
+        rm -rf -- "$new_release"
+        new_release=
+    fi
+    if [ -n "$stage" ]; then
+        rm -rf -- "$stage"
+        stage=
+    fi
+}
+
+# shellcheck disable=SC2317,SC2329 # the INT and TERM traps call it
+on_signal() {
+    trap '' INT TERM
+    log error "stopped by SIG$1, the install is undone"
+    undo_install
+    exit "$2"
+}
+
+trap 'undo_install' EXIT
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
+
+# Helpers
+
+# point_current TARGET: replace current atomically (R16).
+point_current() {
+    local tmp="$base/.current.$$"
+    rm -f -- "$tmp"
+    ln -s -- "$1" "$tmp" && mv -fT -- "$tmp" "$current_link"
+}
+
+current_version() {
+    local target
+    [ -L "$current_link" ] || return 0
+    target=$(readlink -- "$current_link") || return 0
+    printf '%s' "${target##*/}"
+}
+
+# previous_version CURRENT: the previous release of R22, or nothing.
+previous_version() {
+    local action version
+    [ -f "$history_file" ] || return 0
+    while IFS=$'\t' read -r _ action version _; do
+        case $action in install | rollback) ;; *) continue ;; esac
+        [[ $version =~ $VERSION_RE ]] || continue
+        [ "$version" != "$1" ] || continue
+        [ -d "$releases_dir/$version" ] || continue
+        printf '%s' "$version"
+        return 0
+    done < <(tac -- "$history_file")
+}
+
+# list_releases: the installed versions in the order of sort -V, one on each line.
+list_releases() {
+    local dir name
+    [ -d "$releases_dir" ] || return 0
+    for dir in "$releases_dir"/*/; do
+        [ -d "$dir" ] || continue
+        dir=${dir%/}
+        name=${dir##*/}
+        [[ $name =~ $VERSION_RE ]] && printf '%s\n' "$name"
+    done | sort -V
+}
+
+history_add() {
+    printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" >>"$history_file" ||
+        die 1 "cannot write $history_file"
+}
+
+take_lock() {
+    mkdir -p -- "$base" || die 1 "cannot make $base"
+    exec 9>>"$lock_file" || die 1 "cannot open $lock_file"
+    # A lock on the shared open file stays after flock ends. The wait in the
+    # background lets the signal traps run at once (R21).
+    flock -x -w "$lock_wait" 9 &
+    child_pid=$!
+    wait "$child_pid" || die 75 "another relctl holds the lock $lock_file"
+    child_pid=
+}
+
+run_health() {
+    local version=$1 dir=$2 rc
+    [ -n "$health_cmd" ] || return 0
+    info "running the health check of $version"
+    (
+        cd -- "$dir" || exit 1
+        RELCTL_VERSION=$version RELCTL_RELEASE_DIR=$dir exec timeout "$health_timeout" "$health_cmd"
+    ) </dev/null >>"$health_log" 2>&1 9>&- &
+    child_pid=$!
+    wait "$child_pid"
+    rc=$?
+    child_pid=
+    return "$rc"
+}
+
+link_shared() {
+    local release=$1 p parent
+    for p in "${shared_paths[@]}"; do
+        mkdir -p -- "$shared_dir/$p" || die 1 "cannot make $shared_dir/$p"
+        rm -rf -- "${release:?}/$p"
+        parent=$(dirname -- "$release/$p")
+        mkdir -p -- "$parent" || die 1 "cannot make $parent"
+        ln -s -- "$shared_dir/$p" "$release/$p" || die 1 "cannot link $release/$p"
+    done
+}
+
+# Commands
+
+do_prune() {
+    local cur prev v n=0
+    local -a all
+    local -A kept=()
+    cur=$(current_version)
+    prev=$(previous_version "$cur")
+    mapfile -t all < <(list_releases)
+    for v in "$cur" "$prev"; do
+        if [ -n "$v" ] && [ -d "$releases_dir/$v" ] && [ -z "${kept[$v]+x}" ]; then
+            kept[$v]=1
+            n=$((n + 1))
+        fi
+    done
+    for ((i = ${#all[@]} - 1; i >= 0 && n < keep; i--)); do
+        v=${all[i]}
+        [ -z "${kept[$v]+x}" ] || continue
+        kept[$v]=1
+        n=$((n + 1))
+    done
+    for v in "${all[@]}"; do
+        [ -z "${kept[$v]+x}" ] || continue
+        if [ "$dry_run" = true ]; then
+            info "would remove release $v"
+        else
+            rm -rf -- "${releases_dir:?}/$v" || die 1 "cannot remove release $v"
+            info "removed release $v"
+        fi
+    done
+}
+
+cmd_install() {
+    local pkg=$1 sumfile expected digest members name version_member content version
+    local reactivate=false stored
+
+    # R11
+    if [ ! -f "$pkg" ] || [ ! -r "$pkg" ]; then
+        die 4 "cannot read the package $pkg"
+    fi
+    sumfile=$pkg.sha256
+    if [ ! -f "$sumfile" ] || [ ! -r "$sumfile" ]; then
+        die 4 "cannot read the checksum file $sumfile"
+    fi
+    expected=
+    read -r expected _ <"$sumfile"
+    [[ $expected =~ ^[0-9A-Fa-f]{64}$ ]] || die 4 "the checksum file $sumfile has no SHA-256"
+    expected=${expected,,}
+    digest=$(sha256sum <"$pkg") || die 1 "cannot read the package $pkg"
+    digest=${digest%% *}
+    [ "$digest" = "$expected" ] || die 4 "the SHA-256 of $pkg is not the one in $sumfile"
+
+    # R12
+    members=$(tar -tzf "$pkg" 2>/dev/null) || die 4 "the package $pkg is not a gzip-compressed tar file"
+    version_member=
+    while IFS= read -r name; do
+        case $name in /*) die 4 "the package has an absolute member name" ;; esac
+        case /$name/ in */../*) die 4 "the package has a member name with '..'" ;; esac
+        case $name in VERSION | ./VERSION) version_member=$name ;; esac
+    done <<<"$members"
+    [ -n "$version_member" ] || die 4 "the package has no VERSION file"
+    content=$(tar -xzOf "$pkg" -- "$version_member" 2>/dev/null && printf x) ||
+        die 4 "cannot read VERSION from the package"
+    content=${content%x}
+    content=${content%$'\n'}
+    [[ $content =~ $VERSION_RE ]] || die 4 "VERSION does not contain a valid version"
+    version=$content
+
+    if [ "$dry_run" = false ]; then
+        take_lock
+    fi
+
+    # R14
+    if [ -d "$releases_dir/$version" ]; then
+        stored=$(cat -- "$releases_dir/$version/.relctl-sha256" 2>/dev/null)
+        [ "$stored" = "$digest" ] || die 5 "version $version is installed from a different package"
+        if [ "$(current_version)" = "$version" ]; then
+            info "version $version is already the current release"
+            return 0
+        fi
+        reactivate=true
+    fi
+
+    if [ "$dry_run" = true ]; then
+        if [ "$reactivate" = true ]; then
+            info "would activate the installed release $version"
+        else
+            info "would install release $version"
+        fi
+        return 0
+    fi
+
+    mkdir -p -- "$releases_dir" "$shared_dir" "$staging_dir" || die 1 "cannot make the directories in $base"
+    if [ -L "$current_link" ]; then
+        had_current=true
+        old_target=$(readlink -- "$current_link")
+    fi
+
+    if [ "$reactivate" = false ]; then
+        stage=$(mktemp -d -- "$staging_dir/$version.XXXXXX") || die 1 "cannot make a staging directory"
+        tar -xzf "$pkg" -C "$stage" --no-same-owner 2>/dev/null || die 4 "cannot unpack $pkg"
+        chmod 750 -- "$stage"
+        printf '%s\n' "$digest" >"$stage/.relctl-sha256" || die 1 "cannot write the checksum"
+        link_shared "$stage"
+        mv -T -- "$stage" "$releases_dir/$version" || die 1 "cannot move the release into place"
+        new_release=$releases_dir/$version
+        stage=
+    fi
+
+    switched=true
+    point_current "releases/$version" || die 1 "cannot point current to $version"
+
+    if ! run_health "$version" "$releases_dir/$version"; then
+        undo_install
+        history_add failed "$version" "$digest"
+        die 6 "the health check of $version failed, current is back to the release from before"
+    fi
+
+    history_add install "$version" "$digest"
+    switched=false
+    new_release=
+    info "installed release $version"
+    do_prune
+}
+
+cmd_rollback() {
+    local cur prev
+    if [ "$dry_run" = false ]; then
+        [ -n "$(previous_version "$(current_version)")" ] || die 7 "there is no previous release"
+        take_lock
+    fi
+    cur=$(current_version)
+    prev=$(previous_version "$cur")
+    [ -n "$prev" ] || die 7 "there is no previous release"
+    if [ "$dry_run" = true ]; then
+        info "would roll back from ${cur:--} to $prev"
+        return 0
+    fi
+    point_current "releases/$prev" || die 1 "cannot point current to $prev"
+    history_add rollback "$prev" -
+    info "rolled back from ${cur:--} to $prev"
+}
+
+cmd_prune() {
+    [ "$dry_run" = true ] || take_lock
+    do_prune
+}
+
+cmd_status() {
+    local cur prev list
+    cur=$(current_version)
+    prev=$(previous_version "$cur")
+    list=$(list_releases | paste -sd ' ' -)
+    printf 'current=%s\nprevious=%s\nreleases=%s\n' "${cur:--}" "${prev:--}" "${list:--}"
+}
+
+case $command in
+install) cmd_install "$package" ;;
+rollback) cmd_rollback ;;
+prune) cmd_prune ;;
+status) cmd_status ;;
+esac
+exit 0

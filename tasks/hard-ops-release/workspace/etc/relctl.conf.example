@@ -1,0 +1,14 @@
+# Example configuration of relctl. Install it as /etc/relctl/relctl.conf.
+# The syntax and all keys are in docs/REQUIREMENTS.md (R4 to R9).
+
+base_dir=/srv/inventory-api
+keep=5
+lock_wait=10
+
+# The health check gets RELCTL_VERSION and RELCTL_RELEASE_DIR.
+health_cmd=/usr/local/libexec/inventory-api/health-check
+health_timeout=30
+
+# Data that each release shares. One path on each line.
+shared=var/uploads
+shared=log

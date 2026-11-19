@@ -1,0 +1,7 @@
+id = "hard-ops-release"
+title = "Make the release installer meet its requirements"
+category = "config"
+language = "shell"
+quick = false
+timeout_s = 3600
+max_turns = 100
