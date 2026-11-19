@@ -275,3 +275,66 @@ def test_external_container(tmp_path):
     assert cfg.server.container == "llama-x"
     assert cfg.server.managed is None
     assert load_config(write(tmp_path, EXTERNAL, "e.toml")).server.container is None
+
+
+REMOTE = """
+name = "remote-test"
+
+[server]
+mode = "remote"
+url = "https://gateway.example.org/api"
+model = "Claude-Test-1"
+
+[client]
+[client.secrets]
+from_profile = "~/profile.sh"
+names = ["ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS"]
+"""
+
+
+def test_loads_remote_server_and_secrets(tmp_path):
+    cfg = load_config(write(tmp_path, REMOTE))
+
+    server = cfg.server
+    assert server.mode == "remote"
+    assert server.url == "https://gateway.example.org/api"
+    assert server.model == "Claude-Test-1"
+    assert server.api_key_file is None
+    assert server.context_tokens is None
+    assert server.agent_network == "proxy"
+    assert server.ca_file == Path("/etc/ssl/certs/ca-certificates.crt")
+    assert server.container is None and server.managed is None
+    assert cfg.client.secrets.from_profile == Path.home() / "profile.sh"
+    assert cfg.client.secrets.names == ("ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS")
+
+
+def test_remote_context_tokens_and_ca_file(tmp_path):
+    text = REMOTE.replace('model = "Claude-Test-1"', 'model = "m"\ncontext_tokens = 200000\nca_file = "~/ca.crt"')
+
+    server = load_config(write(tmp_path, text)).server
+
+    assert server.context_tokens == 200000
+    assert server.ca_file == Path.home() / "ca.crt"
+
+
+def test_remote_url_must_be_https(tmp_path):
+    with pytest.raises(ConfigError, match="https"):
+        load_config(write(tmp_path, REMOTE.replace("https://", "http://")))
+
+
+@pytest.mark.parametrize("key", ['api_key_file = "~/key"', 'health_path = "/x"', 'container = "c"',
+                                 'agent_url = "http://x"'])
+def test_local_server_keys_are_not_allowed_for_remote(tmp_path, key):
+    with pytest.raises(ConfigError, match="unknown keys"):
+        load_config(write(tmp_path, REMOTE.replace('mode = "remote"', f'mode = "remote"\n{key}')))
+
+
+def test_client_secrets_need_from_profile_and_names(tmp_path):
+    with pytest.raises(ConfigError, match="client.secrets.names"):
+        load_config(write(tmp_path, REMOTE.replace('names = ["ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS"]', "")))
+    with pytest.raises(ConfigError, match="client.secrets.colour"):
+        load_config(write(tmp_path, REMOTE + 'colour = "red"\n'))
+
+
+def test_client_without_secrets(tmp_path):
+    assert load_config(write(tmp_path, EXTERNAL)).client.secrets is None

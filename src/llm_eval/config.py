@@ -6,10 +6,12 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 DEFAULT_IMAGE = "localhost/llm-eval-agent:latest"
 PROXY = "proxy"
 MANAGED_CONTAINER = "llm-eval-server"
+CA_FILE = "/etc/ssl/certs/ca-certificates.crt"
 
 # llama-server flags that the harness sets itself for a managed server.
 HARNESS_FLAGS = {"--host", "--port", "--api-key-file", "-m", "--model", "-a", "--alias", "-c", "--ctx-size",
@@ -19,6 +21,7 @@ COMMON_KEYS = {"mode", "api_key_file", "model", "context_tokens", "health_path",
 EXTERNAL_KEYS = COMMON_KEYS | {"url", "container"}
 MANAGED_KEYS = COMMON_KEYS | {"image", "models_dir", "model_file", "port", "args", "draft", "chat_template",
                               "gtt_max_used_mib", "start_timeout_s"}
+REMOTE_KEYS = {"mode", "url", "model", "context_tokens", "agent_network", "ca_file"}
 
 # A value of an args table: true gives the flag alone, false leaves the flag out.
 Args = dict[str, str | int | float | bool]
@@ -52,9 +55,10 @@ class ManagedConfig:
 class ServerConfig:
     mode: str
     url: str
-    api_key_file: Path
+    api_key_file: Path | None  # None for a remote endpoint: its keys come from client.secrets
     model: str  # the model ID for Claude Code, and --alias of a managed server
-    context_tokens: int  # CLAUDE_CODE_MAX_CONTEXT_TOKENS, and -c of a managed server
+    # CLAUDE_CODE_MAX_CONTEXT_TOKENS, and -c of a managed server. Optional for a remote endpoint.
+    context_tokens: int | None
     health_path: str = "/health"
     # "proxy": the agent container has no network and reaches the server through
     # a Unix socket relay of the harness. Any other value is a podman --network
@@ -63,6 +67,14 @@ class ServerConfig:
     agent_url: str | None = None
     container: str | None = None  # the server container, for its log
     managed: ManagedConfig | None = None
+    ca_file: Path = Path(CA_FILE)  # remote endpoint: the CA bundle for the agent container
+
+
+@dataclass(frozen=True)
+class ProfileSecrets:
+    """Environment variables that the harness reads from a shell profile at run time."""
+    from_profile: Path
+    names: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -70,6 +82,7 @@ class ClientConfig:
     image: str = DEFAULT_IMAGE
     config_dir: str = "client-config"
     env: dict[str, str] = field(default_factory=dict)
+    secrets: ProfileSecrets | None = None
 
 
 @dataclass(frozen=True)
@@ -131,8 +144,10 @@ def _sha256(raw: dict[str, Any]) -> str:
 
 def _server(raw: dict[str, Any]) -> ServerConfig:
     mode = _require(raw, "server.", "mode")
-    if mode not in ("external", "managed"):
-        raise ConfigError(f"server.mode must be 'external' or 'managed', not {mode!r}")
+    if mode not in ("external", "managed", "remote"):
+        raise ConfigError(f"server.mode must be 'external', 'managed' or 'remote', not {mode!r}")
+    if mode == "remote":
+        return _remote(raw)
     _check_keys(raw, "server.", EXTERNAL_KEYS if mode == "external" else MANAGED_KEYS)
     for key in ("api_key_file", "model", "context_tokens"):
         _require(raw, "server.", key)
@@ -147,6 +162,16 @@ def _server(raw: dict[str, Any]) -> ServerConfig:
     if server.agent_network != PROXY and not server.agent_url:
         raise ConfigError("server.agent_url is necessary when server.agent_network is not 'proxy'")
     return server
+
+
+def _remote(raw: dict[str, Any]) -> ServerConfig:
+    _check_keys(raw, "server.", REMOTE_KEYS)
+    url = _require(raw, "server.", "url")
+    if urlsplit(url).scheme != "https":
+        raise ConfigError(f"server.url of a remote endpoint must start with https://, not {url!r}")
+    return ServerConfig(mode="remote", url=url, api_key_file=None, model=_require(raw, "server.", "model"),
+                        context_tokens=raw.get("context_tokens"), agent_network=raw.get("agent_network", PROXY),
+                        ca_file=Path(raw.get("ca_file", CA_FILE)).expanduser())
 
 
 def _managed(raw: dict[str, Any]) -> ManagedConfig:
@@ -178,9 +203,17 @@ def _check_args(args: Args, prefix: str) -> None:
 
 
 def _client(raw: dict[str, Any]) -> ClientConfig:
-    _check_keys(raw, "client.", {"image", "config_dir", "env"})
+    _check_keys(raw, "client.", {"image", "config_dir", "env", "secrets"})
     env = {key: str(value) for key, value in raw.get("env", {}).items()}
-    return ClientConfig(**{**raw, "env": env})
+    return ClientConfig(**{**raw, "env": env, "secrets": _secrets(raw.get("secrets"))})
+
+
+def _secrets(raw: dict[str, Any] | None) -> ProfileSecrets | None:
+    if raw is None:
+        return None
+    _check_keys(raw, "client.secrets.", {"from_profile", "names"})
+    return ProfileSecrets(Path(_require(raw, "client.secrets.", "from_profile")).expanduser(),
+                          tuple(_require(raw, "client.secrets.", "names")))
 
 
 def _require(raw: dict[str, Any], prefix: str, key: str) -> Any:
