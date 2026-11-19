@@ -14,11 +14,12 @@ from .config import DEFAULT_IMAGE, MANAGED_CONTAINER, Config, ConfigError, Serve
 from .metrics import ServerLogObserver
 from .podman import Podman
 from .report import load_run, render_report
+from .results import write_json
 from .sampler import MemorySampler
 from .selfcheck import selfcheck_task
 from .server import ServerError, open_server
 from .task import Task, TaskError, find_tasks
-from .trial import RunContext, execute_run, make_run_id
+from .trial import RunContext, execute_run, log, make_run_id, utc_now
 
 DEFAULT_OUT = Path.home() / "daybook-evidence" / "local-llm" / "eval"
 TIER_REPS = {"quick": 1, "full": 3}
@@ -57,6 +58,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--out", type=Path, help=f"run directory, one --config only (default: {DEFAULT_OUT}/<run-id>)")
     p.add_argument("--replace", action="store_true",
                    help=f"remove a {MANAGED_CONTAINER} container that an earlier run of the harness left")
+    p.add_argument("--probe", choices=["speed", "protocol", "all"],
+                   help="probe the server of each run before its first trial, into <run-dir>/probes/. protocol and"
+                        " all: no trials when the case plain, tool_call or tool_round_trip fails")
+    p.add_argument("--probe-target", type=int, action="append", dest="probe_targets",
+                   help="prompt tokens of a speed request of --probe, can repeat (default: 1000, 23000)")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("report", help="write a Markdown report of run directories")
@@ -118,6 +124,8 @@ class RunPlan:
 
 
 def plan_runs(args: argparse.Namespace) -> list[RunPlan]:
+    if args.probe_targets and args.probe not in ("speed", "all"):
+        raise ConfigError("--probe-target works only with --probe speed or --probe all")
     if args.resume:
         return [resume_plan(args)]
     if args.out and len(args.configs) > 1:
@@ -174,6 +182,8 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
             server.check_health()
             observers = make_observers(plan.config.server, podman)
             ctx = RunContext(run_id, out_dir, plan.config, args.root, podman, server, observers)
+            if args.probe and not probe_run(ctx, plan, args.probe, args.probe_targets):
+                return False
             results = execute_run(ctx, plan.tasks, plan.reps, resume=plan.resume)
     except ServerError as e:
         print(f"llm-eval: {plan.config.name}: {e}", file=sys.stderr)
@@ -184,6 +194,46 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
     passed = sum(r["passed"] for r in results)
     print(f"results: {out_dir}  passed {passed}/{len(results)}")
     return True
+
+
+def probe_run(ctx: RunContext, plan: RunPlan, kind: str, targets: list[int] | None) -> bool:
+    """Probe the server of the run into <run-dir>/probes/. The protocol probe runs
+    first. When a case of probe.GATE_CASES fails, the speed probe and the trials
+    do not run, and the result is False."""
+    server = ctx.config.server
+    for kind in ("protocol", "speed") if kind == "all" else (kind,):
+        paths = probe.probe_server(
+            server.url, ctx.server.api_key(), server.model, ctx.out_dir / "probes", (kind,),
+            context_tokens=server.context_tokens, targets=targets or probe.RUN_TARGETS,
+            config={"name": ctx.config.name, "sha256": ctx.config.sha256})
+        if kind == "protocol":
+            failed = probe.gate_failures(json.loads(paths["protocol"].read_text()))
+            if failed:
+                stop_before_trials(ctx, plan, failed)
+                return False
+    return True
+
+
+def stop_before_trials(ctx: RunContext, plan: RunPlan, failed: list[dict]) -> None:
+    """Write the reason to run.json, run.log and stderr."""
+    names = [case["name"] for case in failed]
+    reason = f"the protocol probe failed the basic cases {', '.join(names)}, no trials ran"
+    run_file = ctx.out_dir / "run.json"
+    info = json.loads(run_file.read_text()) if plan.resume else {
+        "run_id": ctx.run_id,
+        "config": {"name": ctx.config.name, "path": str(ctx.config.path), "sha256": ctx.config.sha256,
+                   "values": ctx.config.raw},
+        "tasks": [t.id for t in plan.tasks],
+        "reps": plan.reps,
+        "started_at": utc_now(),
+    }
+    info["server"] = ctx.server.describe()
+    info["probe_gate"] = {"failed_cases": names, "reason": reason, "at": utc_now()}
+    write_json(run_file, info)
+    log(ctx, f"{utc_now()} run {ctx.run_id}: STOPPED, {reason}")
+    for case in failed:
+        detail = case["error"] or f"HTTP {case['http_status']}, {case['note']}"
+        print(f"llm-eval: {ctx.config.name}: probe case {case['name']} failed: {detail}"[:500], file=sys.stderr)
 
 
 def cmd_run(args: argparse.Namespace) -> int:

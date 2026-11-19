@@ -24,6 +24,9 @@ from pathlib import Path
 
 SCHEMA = 1
 DEFAULT_TARGETS = (1000, 23000, 60000, 120000)
+RUN_TARGETS = (1000, 23000)  # run --probe: a 120000 token request takes about 13 minutes
+# run --probe: when one of these cases fails, the trials of the configuration do not run.
+GATE_CASES = ("plain", "tool_call", "tool_round_trip")
 DECODE_TOKENS = 256
 CONTEXT_MARGIN = 1024
 CASE_MAX_TOKENS = 4096
@@ -520,6 +523,11 @@ def protocol_probe(client: Client, model: str, cases=CASES, log: Callable[[str],
         log(f"protocol {case.name}: {'pass' if record['passed'] else 'FAIL'} (HTTP {record['http_status']})"
             f" {record['error'] or record['note']}"[:300])
     return {"cases": records, "passed": sum(r["passed"] for r in records), "total": len(records)}
+
+
+def gate_failures(protocol: dict) -> list[dict]:
+    """The cases of GATE_CASES that failed in a protocol probe result."""
+    return [case for case in protocol["cases"] if case["name"] in GATE_CASES and not case["passed"]]
 
 
 def probe_server(base_url: str, api_key: str, model: str, out_dir: Path, kinds=("speed", "protocol"),
