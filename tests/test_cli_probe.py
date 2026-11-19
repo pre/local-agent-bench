@@ -79,6 +79,8 @@ def test_gate_stops_the_trials_when_a_basic_case_fails(root, fake, llama, probe_
     assert "plain" in (out / "run.log").read_text()
     err = capsys.readouterr().err
     assert "tool_round_trip" in err and "HTTP 500" in err
+    assert cli.main(["report", str(out)]) == 0
+    assert "STOPPED: the protocol probe failed the basic cases plain" in capsys.readouterr().out
 
 
 def test_gate_ignores_the_other_cases(root, fake, llama):

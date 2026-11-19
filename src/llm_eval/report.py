@@ -206,8 +206,10 @@ def _runs_section(runs: list[Run]) -> list[str]:
         if not run.info:
             lines.append(f"- `{run.id}`: no run.json, {found}")
             continue
+        gate = run.info.get("probe_gate")
         lines.append(f"- `{run.id}` ({run.info['config']['name']}): {state}{found}, started"
-                     f" {run.info.get('started_at')}, finished {run.info.get('finished_at', 'no')}")
+                     f" {run.info.get('started_at')}, finished {run.info.get('finished_at', 'no')}"
+                     + (f". STOPPED: {gate['reason']}" if gate else ""))
     if any(run.partial for run in runs):
         lines += ["", "A PARTIAL run is not finished or has fewer results than tasks times repetitions."
                   " Its values can change."]
