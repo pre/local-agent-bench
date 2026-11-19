@@ -2,6 +2,8 @@
 
 server.mode = "external": the server runs already. server.mode = "managed": the
 harness starts a llama-server container before the trials and removes it after them.
+server.mode = "remote": an HTTPS endpoint (an LLM gateway) that the agent reaches
+through an HTTP CONNECT proxy of the harness.
 """
 
 import hashlib
@@ -11,6 +13,7 @@ import shutil
 import signal
 import socket
 import socketserver
+import ssl
 import sys
 import threading
 import time
@@ -27,6 +30,7 @@ from .sampler import read_gtt_used_mib
 
 RELAY_DIR = "/run/llm-eval"
 PROXY_BASE_URL = "http://127.0.0.1:8080"
+REMOTE_CA = "/run/llm-eval-ca.crt"
 
 # Runs in the agent container (network "none"). socat gives Claude Code a TCP
 # port on the loopback interface and sends the bytes to the Unix socket of the
@@ -49,6 +53,7 @@ class AgentAccess:
     base_url: str
     mounts: list[Mount] = field(default_factory=list)
     command_prefix: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
 
 
 class UnixRelay:
@@ -56,20 +61,12 @@ class UnixRelay:
 
     def __init__(self, socket_path: Path, host: str, port: int):
         self.socket_path = socket_path
-        target = (host, port)
+        self.target = (host, port)
+        relay = self
 
         class Handler(socketserver.BaseRequestHandler):
             def handle(self):
-                try:
-                    upstream = socket.create_connection(target, timeout=10)
-                except OSError:
-                    return
-                upstream.settimeout(None)
-                back = threading.Thread(target=_pump, args=(upstream, self.request), daemon=True)
-                back.start()
-                _pump(self.request, upstream)
-                back.join()
-                upstream.close()
+                relay.handle(self.request)
 
         self.server = socketserver.ThreadingUnixStreamServer(str(socket_path), Handler, bind_and_activate=True)
         self.server.daemon_threads = True
@@ -82,6 +79,59 @@ class UnixRelay:
         self.server.shutdown()
         self.server.server_close()
         self.socket_path.unlink(missing_ok=True)
+
+    def handle(self, client: socket.socket) -> None:
+        try:
+            upstream = socket.create_connection(self.target, timeout=10)
+        except OSError:
+            return
+        _splice(client, upstream)
+
+
+class ConnectProxy(UnixRelay):
+    """An HTTP proxy on a Unix socket that accepts only "CONNECT host:port" to its
+    target. It refuses all other requests with HTTP 403. TLS goes through the
+    tunnel from end to end: the proxy does not see the keys."""
+
+    MAX_HEAD = 8192
+
+    def handle(self, client: socket.socket) -> None:
+        head, rest = _read_head(client, self.MAX_HEAD)
+        method, _, target = head.partition(b"\r\n")[0].decode(errors="replace").partition(" ")
+        host, port = self.target
+        if method != "CONNECT" or target.split(" ")[0].lower() != f"{host}:{port}".lower():
+            client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            return
+        try:
+            upstream = socket.create_connection(self.target, timeout=10)
+        except OSError:
+            client.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            return
+        client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        upstream.sendall(rest)
+        _splice(client, upstream)
+
+
+def _read_head(client: socket.socket, limit: int) -> tuple[bytes, bytes]:
+    """Read an HTTP request head. Return the head and the bytes after it."""
+    data = b""
+    while b"\r\n\r\n" not in data and len(data) < limit:
+        chunk = client.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    head, _, rest = data.partition(b"\r\n\r\n")
+    return head, rest
+
+
+def _splice(client: socket.socket, upstream: socket.socket) -> None:
+    """Copy the bytes in the two directions until both sides close."""
+    upstream.settimeout(None)
+    back = threading.Thread(target=_pump, args=(upstream, client), daemon=True)
+    back.start()
+    _pump(client, upstream)
+    back.join()
+    upstream.close()
 
 
 def _pump(source: socket.socket, dest: socket.socket) -> None:
@@ -122,6 +172,10 @@ class ExternalServer:
     def api_key(self) -> str:
         return self.cfg.api_key_file.read_text().strip()
 
+    def secret_env(self) -> dict[str, str]:
+        """The secret environment of Claude Code for this server."""
+        return {"ANTHROPIC_AUTH_TOKEN": self.api_key()}
+
     def check_health(self) -> None:
         request = urllib.request.Request(
             self.cfg.url + self.cfg.health_path, headers={"Authorization": f"Bearer {self.api_key()}"}
@@ -149,6 +203,52 @@ class ExternalServer:
     def describe(self) -> dict:
         """The server values for run.json."""
         return {"mode": "external", "url": self.cfg.url, "container": self.cfg.container}
+
+
+class RemoteServer(ExternalServer):
+    """An HTTPS endpoint, for example an LLM gateway. No container, no API key file:
+    the keys come from client.secrets. In proxy mode the agent container has no
+    network and reaches only the host and port of the endpoint, through a
+    ConnectProxy of the harness on the relay socket."""
+
+    def __enter__(self) -> "RemoteServer":
+        if self.cfg.agent_network == PROXY:
+            relay_dir = self.scratch / "relay"
+            relay_dir.mkdir(parents=True, exist_ok=True)
+            url = urlsplit(self.cfg.url)
+            self.relay = ConnectProxy(relay_dir / "api.sock", url.hostname, url.port or 443)
+            self.relay.start()
+        return self
+
+    def secret_env(self) -> dict[str, str]:
+        return {}
+
+    def check_health(self) -> None:
+        """A request without credentials. Each HTTP status shows that the endpoint answers."""
+        context = ssl.create_default_context(cafile=str(self.cfg.ca_file))
+        try:
+            urllib.request.urlopen(self.cfg.url, timeout=10, context=context).close()
+        except urllib.error.HTTPError:
+            pass
+        except OSError as e:
+            raise ServerError(f"endpoint {self.cfg.url} is not reachable: {e}") from e
+
+    def agent_access(self) -> AgentAccess:
+        ca = Mount(self.cfg.ca_file, REMOTE_CA, readonly=True)
+        ca_env = {"NODE_EXTRA_CA_CERTS": REMOTE_CA, "SSL_CERT_FILE": REMOTE_CA}
+        if self.relay:
+            return AgentAccess(
+                network="none",
+                base_url=self.cfg.url,
+                mounts=[Mount(self.relay.socket_path.parent, RELAY_DIR), ca],
+                command_prefix=["bash", "-c", PROXY_SCRIPT, "agent"],
+                env={"HTTPS_PROXY": PROXY_BASE_URL, **ca_env},
+            )
+        return AgentAccess(network=self.cfg.agent_network, base_url=self.cfg.url, mounts=[ca], env=ca_env)
+
+    def describe(self) -> dict:
+        return {"mode": "remote", "url": self.cfg.url, "model": self.cfg.model,
+                "agent_network": self.cfg.agent_network}
 
 
 SERVER_LABEL = "llm-eval.role=server"
@@ -360,4 +460,6 @@ def open_server(cfg: ServerConfig, scratch: Path, podman=None, root: Path | None
     """Return the server of the configuration. Use it as a context manager."""
     if cfg.managed:
         return ManagedServer(cfg, scratch, podman, root, out_dir, replace, **managed_kw)
+    if cfg.mode == "remote":
+        return RemoteServer(cfg, scratch)
     return ExternalServer(cfg, scratch)
