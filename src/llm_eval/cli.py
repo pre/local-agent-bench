@@ -78,7 +78,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
                    help="prompt tokens of a speed request, can repeat (default: 1000, 23000, 60000, 120000)")
     p.add_argument("--max-context", type=int, help="do not send speed requests above this count of prompt tokens")
     p.add_argument("--decode-tokens", type=int, default=probe.DECODE_TOKENS)
-    p.add_argument("--timeout", type=float, default=900.0, help="seconds for each request (default: 900)")
+    p.add_argument("--timeout", type=float, default=1800.0, help="seconds for each request (default: 1800)")
     p.set_defaults(func=cmd_probe)
     return parser.parse_args(argv)
 

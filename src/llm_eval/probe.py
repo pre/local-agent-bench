@@ -72,7 +72,7 @@ class Client:
     """HTTP requests to the server, one at a time. The key goes only into the
     Authorization header."""
 
-    def __init__(self, base_url: str, api_key: str, timeout_s: float = 900.0):
+    def __init__(self, base_url: str, api_key: str, timeout_s: float = 1800.0):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout_s = timeout_s
@@ -524,7 +524,7 @@ def protocol_probe(client: Client, model: str, cases=CASES, log: Callable[[str],
 
 def probe_server(base_url: str, api_key: str, model: str, out_dir: Path, kinds=("speed", "protocol"),
                  context_tokens: int | None = None, max_context: int | None = None, targets=DEFAULT_TARGETS,
-                 decode_tokens: int = DECODE_TOKENS, timeout_s: float = 900.0, config: dict | None = None,
+                 decode_tokens: int = DECODE_TOKENS, timeout_s: float = 1800.0, config: dict | None = None,
                  log: Callable[[str], None] = print) -> dict[str, Path]:
     """Run the probes against a server and write <out_dir>/<kind>.json. Stage 2
     calls this function also for a managed server."""
