@@ -45,3 +45,15 @@ resume run_dir *args:
 # Run the unit tests with coverage
 test *args:
     uv run pytest --cov=llm_eval --cov-report=term-missing {{args}}
+
+# Write a Markdown report of run directories: just report <run-dir>... [--out file.md]
+report *args:
+    uv run llm-eval report {{args}}
+
+# Compare two runs task by task
+compare run_a run_b:
+    uv run llm-eval compare {{run_a}} {{run_b}}
+
+# Send the speed and protocol probes to the server of a configuration
+probe config *args:
+    uv run llm-eval probe --config {{config}} {{args}}

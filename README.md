@@ -286,3 +286,130 @@ Other rules:
 ## Image
 
 The image is built with `just image`. The base images (`golang:1.27`, `rust`) are pinned by digest. The yq binary is pinned by version and SHA-256. Claude Code is the binary of the host, checked by SHA-256. The Debian packages (jq, ripgrep, shellcheck, socat) come from Debian 13 and can get security updates in a rebuild.
+
+## Report
+
+```sh
+just report ~/daybook-evidence/local-llm/eval/<run-id> [<run-id>...]
+uv run llm-eval report <run-dir>... --out report.md
+```
+
+`report` reads `run.json` and each `*/result.json` of the run directories and writes Markdown to stdout or to the `--out` file. The report has these parts:
+
+| Part | Content |
+|---|---|
+| Runs | Each run directory: trials found and expected, start and end time. A run that is not finished, or that has fewer results than tasks times repetitions, is marked PARTIAL |
+| Configurations | One row for each configuration: trials counted, pass rate with a 95 % Wilson interval, mean score, median and total wall time, prompt and decode tokens per second, draft acceptance, GTT peak, lowest MemAvailable, lowest SwapFree, count of each failure reason, count of harness errors |
+| Tasks | Task against configuration: passes of the counted repetitions (for example `2/3`). The mean score is shown when a trial has a partial score |
+| Failed trials | For each configuration: run, task, repetition, failure reason, score, failed check names, turns, wall time |
+| Limits | The count of trials and the width of the interval for each configuration |
+| Probes | The speed and protocol probe results, when the run directory has `probes/speed.json` or `probes/protocol.json` |
+
+Rules:
+
+- A configuration is a name and the SHA-256 of its values. The same name with a different SHA-256 is a different row, and the row label has the first 8 characters of the SHA-256.
+- A trial with `harness_error` is not a model failure. It is not in the pass rate, the mean score and the median wall time. The total wall time includes it.
+- Rows are sorted by pass rate, then by median wall time.
+- Speed values come from the `server` dictionary of `result.json`: the sum of the tokens divided by the sum of the seconds of all trials, not a mean of rates. Draft acceptance is the sum of accepted tokens divided by the sum of generated draft tokens. Memory values come from the `memory` dictionary: the peak of the peaks and the minimum of the minimums. A value is `n/a` when no trial has it.
+
+## Compare
+
+```sh
+just compare <run-dir-a> <run-dir-b>
+```
+
+`compare` pairs the tasks that both runs have. For each task it shows the passes and the mean score of A and B, and the difference. Then it shows the totals for the common tasks (pass rate with the 95 % interval, mean score, median wall time, decode tokens per second, harness errors) and the count of tasks where A is better, equal or worse. A task is better when its pass rate is higher. When the pass rates are equal, the mean score decides.
+
+The "Noise" part tells if the difference is real:
+
+- The 95 % Wilson intervals of the two pass rates overlap, or not.
+- An exact two-sided sign test on the tasks that differ. With fewer than 6 tasks that differ, p cannot be below 0.05, and the output says so.
+
+The result is "inside the noise" when the intervals overlap or p is 0.05 or more.
+
+## Probe
+
+```sh
+just probe configs/qwen38-external.toml                       # all probes, all speed targets
+just probe configs/qwen38-external.toml --kind protocol
+just probe configs/qwen38-external.toml --kind speed --target 1000 --target 23000
+```
+
+`probe` sends requests from the host directly to the server URL of the configuration, with the key of `api_key_file`. It does not use Claude Code or a container. The results go to `<out>/probes/speed.json` and `<out>/probes/protocol.json`. The default `<out>` is `~/daybook-evidence/local-llm/eval/probe-<UTC time>-<configuration>/`. `report <out>` shows the probe results.
+
+The probes are polite to a shared server. They send one request at a time. Before each request they read `/slots` and wait (at most 300 s) until no slot processes a request. Each request has a timeout (`--timeout`, default 1800 s). The timeout is for each read of the socket, and the server sends no data while it processes the prompt.
+
+Other code can call `llm_eval.probe.probe_server(base_url, api_key, model, out_dir, ...)`, for example for a managed server.
+
+### Speed probe
+
+For each target (default 1000, 23000, 60000 and 120000 tokens) the probe sends one streaming `/v1/chat/completions` request. The prompt has about the target count of tokens and asks for a long answer. The probe stops the answer at `--decode-tokens` (default 256) and switches off thinking with `chat_template_kwargs: {"enable_thinking": false}`.
+
+- The prompt is real prose and code: the Python language reference (`pydoc_data.topics`) and 20 modules of the Python standard library, in alternate pieces of about 6000 characters. The probe uses `/tokenize` and `/detokenize` of llama-server to cut the text to the target size.
+- A random nonce is at the start of the prompt. Thus the server cannot use its prompt cache, and it processes the full prompt again. `cache_tokens` shows the count of tokens that came from the cache.
+- The speed values come from the `timings` object in the last chunk of the stream (llama.cpp). `/v1/messages` does not give timings. Time to first token is measured by the client: from the request to the first chunk with text.
+- A target is skipped when it is above `context_tokens` of the configuration minus the decode tokens and a margin of 1024 tokens, or above `--max-context`. After a failed request the probe sends no more requests.
+- On this machine (Qwen3.8 Flash-Next UD-Q4_K_XL with MTP, 2026-11-19) the 120000 token request took 785 s: 767 s for the prompt at 157 tokens per second. The full speed probe took about 20 minutes.
+
+`speed.json`:
+
+```json
+{
+  "schema": 1, "kind": "speed", "base_url": "...", "model": "...",
+  "config": {"name": "...", "sha256": "..."},
+  "server": {"build_info": "...", "model_path": "...", "total_slots": 1, "n_ctx": 131072},
+  "started_at": "...", "finished_at": "...",
+  "decode_tokens": 256, "corpus": "Python 3.15: pydoc topics and 20 standard library modules",
+  "results": [{
+    "target_tokens": 23000, "prompt_tokens": 23013, "cache_tokens": 0,
+    "prompt_seconds": 73.7, "prompt_tps": 312.3,
+    "decode_tokens": 256, "decode_seconds": 10.1, "decode_tps": 25.3,
+    "ttft_s": 73.8, "total_s": 83.9,
+    "draft_generated": 283, "draft_accepted": 160, "draft_acceptance": 0.565,
+    "reasoning_chars": 0, "finish_reason": "length", "error": null, "waited_s": 0.0
+  }],
+  "skipped": [{"target_tokens": 120000, "reason": "above --max-context 30000"}]
+}
+```
+
+A failed request gives `{"target_tokens": N, "error": "HTTP 503: ..."}`.
+
+### Protocol probe
+
+The protocol probe sends a fixed list of small requests to `/v1/messages`, the endpoint that Claude Code uses. Each case records the HTTP status, the error text and the result of one assertion on the response.
+
+| Case | Request | Assertion |
+|---|---|---|
+| `plain` | One user message | The text has the requested word |
+| `two_system_blocks` | Two system blocks at the start | The text has the codes of the two blocks |
+| `system_in_middle` | A system message in the middle of the conversation | The text has the code of the system message. The original chat template of Qwen3.8 gave HTTP 500 "System message must be at the beginning" |
+| `tool_call` | A question that needs a tool | A `tool_use` block, the input agrees with the schema |
+| `tool_round_trip` | Assistant `tool_use`, user `tool_result` | The final text uses the tool result |
+| `parallel_tools` | A question that needs two tools | Two `tool_use` blocks in one turn, each input agrees with its schema |
+| `nested_arguments` | A tool with nested objects and arrays | The input agrees with the schema |
+| `tool_result_error` | A `tool_result` with `is_error: true` | HTTP 200 with a text or a `tool_use` block |
+| `stream_tool_call` | `stream: true` with a tool | The event sequence is well formed (`message_start` first, `message_stop` last, one open block at a time, block indexes in sequence, a `message_delta` with a stop reason) and the tool input JSON agrees with the schema |
+| `thinking_budget` | `thinking: {"type": "enabled", "budget_tokens": 1024}` | The reasoning is in a `thinking` block, the text has the answer and no `<think>` tags |
+| `thinking_disabled` | `thinking: {"type": "disabled"}` | No `thinking` block |
+| `max_tokens` | `max_tokens: 16` and a long answer | `stop_reason` is `max_tokens` |
+| `client_sampling` | `temperature`, `top_p` and `top_k` from the client | `/slots` shows the client values. Another client can change `/slots` between the two requests |
+| `count_tokens` | `/v1/messages/count_tokens` | `input_tokens` is a positive integer |
+
+To add a case, add one `Case` entry to `CASES` in `src/llm_eval/probe.py`: a name, a description, the request body and a check function.
+
+`protocol.json` has the same header as `speed.json` (`schema`, `kind`, `base_url`, `model`, `config`, `server`, `started_at`, `finished_at`) and:
+
+```json
+{
+  "cases": [{
+    "name": "stream_tool_call", "description": "...", "path": "/v1/messages",
+    "http_status": 200, "passed": false,
+    "note": "1 tool calls: get_weather; block 1 starts before block 0 stops; ...",
+    "error": null, "stop_reason": "tool_use", "seconds": 4.1,
+    "response": "message_start, content_block_start(thinking), content_block_delta x20, ..."
+  }],
+  "passed": 12, "total": 14
+}
+```
+
+`response` is the first 1500 characters of the response body, or a short list of the event types of a stream. `error` is the network error, or the HTTP status and the start of the body when the status is not 200.
