@@ -10,6 +10,7 @@ import re
 import shutil
 import socket
 import socketserver
+import sys
 import threading
 import time
 import urllib.error
@@ -339,7 +340,9 @@ class ManagedServer(ExternalServer):
         _, log = self.podman.call(["logs", MANAGED_CONTAINER])
         self.out_dir.mkdir(parents=True, exist_ok=True)
         (self.out_dir / "server.log").write_text(log.replace(self.api_key(), "<redacted>"))
-        self.podman.call(["rm", MANAGED_CONTAINER])
+        code, out = self.podman.call(["rm", MANAGED_CONTAINER])
+        if code != 0:
+            print(f"llm-eval: could not remove {MANAGED_CONTAINER}: {out.strip()}", file=sys.stderr)
 
 
 def open_server(cfg: ServerConfig, scratch: Path, podman=None, root: Path | None = None,

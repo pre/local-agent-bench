@@ -218,3 +218,22 @@ def test_missing_chat_template(repo):
 
     with pytest.raises(ServerError, match="t.jinja"):
         managed(repo, FakePodman()).__enter__()
+
+
+def test_failed_remove_is_reported(repo, http_server, capsys):
+    podman = FakePodman()
+    real_call = podman.call
+
+    def call(args):
+        if args[0] == "rm":
+            podman.calls.append(args)
+            return 2, "Error: helper stopped with SIGSYS\n"
+        return real_call(args)
+
+    podman.call = call
+
+    with managed(repo, podman, url=http_server):
+        pass
+
+    err = capsys.readouterr().err
+    assert "could not remove llm-eval-server" in err and "SIGSYS" in err
