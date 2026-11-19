@@ -182,6 +182,11 @@ class ConfigStats:
         return any(_server_info(run).get("mode") == "remote" for run in self.runs)
 
     @property
+    def cost_usd(self) -> float | None:
+        """The sum of the cost estimates of Claude Code. None for a local server: there the cost has no meaning."""
+        return None if not self.remote else _pick([t.get("total_cost_usd") for t in self.trials], sum)
+
+    @property
     def memories(self) -> list[dict]:
         return [m for run in self.runs for m in _memories(run)]
 
@@ -293,8 +298,10 @@ def _runs_section(runs: list[Run]) -> list[str]:
             lines.append(f"- `{run.id}`: no run.json, {found}")
             continue
         gate = run.info.get("probe_gate")
+        models = run.info.get("reported_models") if _server_info(run).get("mode") == "remote" else None
         lines.append(f"- `{run.id}` ({run.info['config']['name']}): {state}{found}, started"
                      f" {run.info.get('started_at')}, finished {run.info.get('finished_at', 'no')}"
+                     + (f", reported models {', '.join(models)}" if models else "")
                      + (f". STOPPED: {gate['reason']}" if gate else ""))
     if any(run.partial for run in runs):
         lines += ["", "A PARTIAL run is not finished or has fewer results than tasks times repetitions."
@@ -304,14 +311,14 @@ def _runs_section(runs: list[Run]) -> list[str]:
 
 def _config_table(rows: list[ConfigStats]) -> list[str]:
     header = ["Configuration", "Trials", "Pass rate (95 % interval)", "Base pass", "Hard pass", "Mean score",
-              "Median wall s", "Total wall s", "Prompt tok/s", "Decode tok/s", "Draft acceptance", "GTT peak GiB",
+              "Median wall s", "Total wall s", "Cost USD", "Prompt tok/s", "Decode tok/s", "Draft acceptance", "GTT peak GiB",
               "Min MemAvailable GiB", "Min SwapFree GiB", "Failures", "Harness errors"]
     body = []
     for s in rows:
         failures = ", ".join(f"{reason} {count}" for reason, count in sorted(s.failures.items())) or "-"
         body.append([s.label, s.n, _pass_rate(s.passes, s.n), _tier_passes(s.counted, False),
                      _tier_passes(s.counted, True), _num(s.mean_score, 2), _num(s.median_wall),
-                     _num(s.total_wall), _num(s.prompt_tps), _num(s.decode_tps), _num(s.draft_acceptance, 2),
+                     _num(s.total_wall), _num(s.cost_usd, 2), _num(s.prompt_tps), _num(s.decode_tps), _num(s.draft_acceptance, 2),
                      _gib(s.gtt_peak_mib), _gib(s.mem_available_min_mib), _gib(s.swap_free_min_mib), failures,
                      s.harness_errors])
     lines = ["## Configurations", ""] + _table(header, body)
@@ -322,8 +329,9 @@ def _config_table(rows: list[ConfigStats]) -> list[str]:
                       " Each value is a separate row."]
     lines += ["", "Pass rate and mean score do not include harness errors. Base pass and Hard pass are the passes"
               " of the counted trials of the tasks that are not hard and of the hard tasks. Median wall time is for"
-              " the counted trials, total wall time is for all trials. Speed values are for all trials. Memory"
-              " values are for all trials and the probes. GTT peak also includes the server start, see \"Memory\"."]
+              " the counted trials, total wall time is for all trials. Cost USD is the sum of the cost estimates of"
+              " Claude Code for all trials of a remote configuration. Speed values are for all trials. Memory values"
+              " are for all trials and the probes. GTT peak also includes the server start, see \"Memory\"."]
     return lines
 
 

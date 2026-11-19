@@ -329,6 +329,38 @@ def test_remote_configuration_has_no_gtt_values(tmp_path):
     assert "does not use the local GPU memory" in text
 
 
+def test_cost_is_the_sum_of_the_trials_of_a_remote_configuration(tmp_path):
+    trials = [{**trial("t1"), "total_cost_usd": 0.42}, {**trial("t2", passed=False), "total_cost_usd": 0.1},
+              {**trial("t3", passed=False, reason="harness_error"), "total_cost_usd": None}]
+    remote = {"mode": "remote", "url": "https://gateway.example.org", "model": "m", "agent_network": "proxy"}
+
+    row = config_row(render_report([load_run(write_run(tmp_path / "r", trials, server=remote))]), "c1")
+
+    assert row["Cost USD"] == "0.52"
+
+
+def test_cost_of_a_local_configuration_is_not_available(tmp_path):
+    trials = [{**trial("t1"), "total_cost_usd": 0.42}]  # the estimate of Claude Code has no meaning for a local server
+
+    row = config_row(render_report([load_run(write_run(tmp_path / "r", trials, server=MANAGED))]), "c1")
+
+    assert row["Cost USD"] == "n/a"
+
+
+def test_runs_list_the_reported_models_of_a_remote_run(tmp_path):
+    remote = {"mode": "remote", "url": "https://gateway.example.org", "model": "Claude-Test-1"}
+    remote_dir = write_run(tmp_path / "remote", [trial("t1")], server=remote)
+    info = json.loads((remote_dir / "run.json").read_text())
+    (remote_dir / "run.json").write_text(json.dumps({**info, "reported_models": ["claude-test-1", "other"]}))
+    local = write_run(tmp_path / "local", [trial("t1", name="c2", sha=SHA_B)], server=MANAGED)
+
+    runs = render_report([load_run(remote_dir), load_run(local)]).split("## Runs", 1)[1].split("\n## ", 1)[0]
+
+    assert "- `remote` (c1): 1 of 1 trial, started 2026-11-19T10:00:00+00:00, finished 2026-11-19T11:00:00+00:00," \
+           " reported models claude-test-1, other" in runs
+    assert "reported models" not in next(line for line in runs.splitlines() if "`local`" in line)
+
+
 def test_merged_runs_take_before_and_after_from_the_run_with_the_highest_peak(tmp_path):
     low = load_run(write_run(tmp_path / "a", [trial("t1", memory=memory(83968, 30720, 8192))], server=MANAGED))
     high_server = {**MANAGED, "gtt_used_before_start_mib": 4096, "gtt_used_after_load_mib": 86016,
