@@ -1,0 +1,8 @@
+# GPU partition, building 2.
+gpu-a01  rack=r01 state=ready   gpus=8 used=3 model=mi300x
+gpu-a02  rack=r01 state=ready   gpus=8 used=8 model=mi300x
+gpu-a03  rack=r01 state=drained gpus=8 used=0 model=mi300x
+gpu-a04  rack=r01 state=ready   gpus=8 used=2 model=mi300x
+gpu-b01  rack=r02 state=down    gpus=8 used=0 model=mi325x
+gpu-b02  rack=r02 state=ready   gpus=8 used=2 model=mi325x
+gpu-b03  rack=r02 state=drained gpus=8 used=4 model=mi325x

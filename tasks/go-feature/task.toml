@@ -1,0 +1,7 @@
+id = "go-feature"
+title = "Add a per-rack summary to the node inventory CLI"
+category = "feature"
+language = "go"
+quick = false
+timeout_s = 1800
+max_turns = 60
