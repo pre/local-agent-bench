@@ -24,6 +24,11 @@ class FakePodman:
         self.specs: list[ContainerSpec] = []
         self.timeouts: list[float] = []
         self.outputs: list[ContainerSpec] = []
+        self.calls: list[list[str]] = []
+        self.containers: dict[str, dict] = {}
+        self.server_log = "llama-server log\n"
+        self.server_runs = True  # False: a started server container stops at once
+        self.run_exit_code = 0
 
     def run(self, spec: ContainerSpec, stdout: Path, stderr: Path, timeout_s: float) -> RunResult:
         self.specs.append(spec)
@@ -35,6 +40,37 @@ class FakePodman:
         if code == "timeout":
             return RunResult(137, True, timeout_s)
         return RunResult(code, False, 1.5)
+
+    def call(self, args: list[str]) -> tuple[int, str]:
+        """podman commands for a detached container (the managed server). The fake
+        keeps the state of each container in self.containers."""
+        self.calls.append(args)
+        command, name = args[0], args[-1]
+        if command == "run" and "-d" in args:
+            name = args[args.index("--name") + 1]
+            labels = dict(args[i + 1].split("=") for i, a in enumerate(args) if a == "--label")
+            self.containers[name] = {"labels": labels, "running": self.server_runs}
+            return self.run_exit_code, "containerid\n"
+        if command == "run":
+            return 0, "version: 1.0.0-dev (build 12531, commit e4b620af1)\nbuilt with GNU 16.2.1\n"
+        if command == "ps":
+            return 0, "".join(f"{n}  image  Up\n" for n in self.containers)
+        if name not in self.containers:
+            return 125, f"Error: no such container {name}\n"
+        container = self.containers[name]
+        if command == "container":  # container inspect
+            info = {"Config": {"Labels": container["labels"]}, "ImageDigest": "sha256:serverdigest",
+                    "State": {"Running": container["running"], "Status": "running" if container["running"] else "exited"}}
+            return 0, json.dumps([info])
+        if command == "logs":
+            return 0, self.server_log
+        if command == "stop":
+            container["running"] = False
+            return 0, ""
+        if command == "rm":
+            del self.containers[name]
+            return 0, ""
+        raise AssertionError(f"unexpected podman call {args}")
 
     def output(self, spec: ContainerSpec) -> str:
         self.outputs.append(spec)
