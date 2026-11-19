@@ -1,0 +1,7 @@
+id = "write-tests"
+title = "Write unit tests for the maintenance window package"
+category = "tests"
+language = "go"
+quick = false
+timeout_s = 1800
+max_turns = 60
