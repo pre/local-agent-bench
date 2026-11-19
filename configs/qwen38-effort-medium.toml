@@ -1,6 +1,13 @@
-# Reasoning effort medium. The chat template accepts xhigh (the default), medium and low.
+# Reasoning effort medium. Claude Code sends output_config.effort in each request
+# (default "high", which the template makes xhigh), and llama-server gives the request
+# value to the chat template. It replaces the reasoning_effort of --chat-template-kwargs.
+# So CLAUDE_CODE_EFFORT_LEVEL controls the effort. The server flag is the value for a
+# request without an effort (for example the protocol probe).
 base = "qwen38-base.toml"
 name = "qwen38-effort-medium"
 
 [server.args]
 --chat-template-kwargs = '{"reasoning_effort":"medium"}'
+
+[client.env]
+CLAUDE_CODE_EFFORT_LEVEL = "medium"

@@ -85,3 +85,11 @@ def test_gateway_configs_use_one_model_and_the_profile_secrets(name, model):
     assert cfg.server.context_tokens is None
     assert cfg.client.secrets.names == ("ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS")
     assert "ANTHROPIC_AUTH_TOKEN" not in cfg.client.env
+
+
+
+def test_effort_variants_set_the_effort_of_claude_code():
+    # Claude Code sends output_config.effort in each request, and the request value
+    # replaces the reasoning_effort of --chat-template-kwargs.
+    assert load_config(CONFIGS / "qwen38-effort-medium.toml").client.env["CLAUDE_CODE_EFFORT_LEVEL"] == "medium"
+    assert load_config(CONFIGS / "qwen38-effort-low.toml").client.env["CLAUDE_CODE_EFFORT_LEVEL"] == "low"

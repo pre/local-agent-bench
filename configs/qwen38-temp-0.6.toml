@@ -1,4 +1,5 @@
-# Temperature 0.6 in place of 1.0 of the model card.
+# Temperature 0.6 in place of 1.0 of the model card. Claude Code 2.1.328 sends no
+# temperature, top_p or top_k, so the server flags control the sampling.
 base = "qwen38-base.toml"
 name = "qwen38-temp-0.6"
 

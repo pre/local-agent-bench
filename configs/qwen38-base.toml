@@ -2,6 +2,9 @@
 # The same effective settings as the server llama-qwen38 of ~/dev/local-llm/llama-server
 # ("just up-mtp"): UD-Q4_K_XL, MTP head, context 131072, KV cache q8_0, one slot.
 # The variant files (base = "qwen38-base.toml") change one value each.
+# Reasoning effort: Claude Code sends output_config.effort "high" in each request, and the
+# template makes it xhigh. CLAUDE_CODE_EFFORT_LEVEL in [client.env] changes it.
+# Sampling: Claude Code sends no temperature, top_p or top_k, so the server flags apply.
 name = "qwen38-base"
 
 [server]
