@@ -1,4 +1,4 @@
-"""Command line: llm-eval selfcheck, llm-eval run."""
+"""Command line: llm-eval selfcheck, run, report, compare, probe."""
 
 import argparse
 import json
@@ -8,9 +8,12 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import probe
+from .compare import compare_runs
 from .config import DEFAULT_IMAGE, MANAGED_CONTAINER, Config, ConfigError, ServerConfig, load_config
 from .metrics import ServerLogObserver
 from .podman import Podman
+from .report import load_run, render_report
 from .sampler import MemorySampler
 from .selfcheck import selfcheck_task
 from .server import ServerError, open_server
@@ -55,6 +58,28 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--replace", action="store_true",
                    help=f"remove a {MANAGED_CONTAINER} container that an earlier run of the harness left")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("report", help="write a Markdown report of run directories")
+    p.add_argument("runs", nargs="+", type=Path, help="run directories")
+    p.add_argument("--out", type=Path, help="Markdown file (default: stdout)")
+    p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("compare", help="compare two runs task by task")
+    p.add_argument("run_a", type=Path)
+    p.add_argument("run_b", type=Path)
+    p.set_defaults(func=cmd_compare)
+
+    p = sub.add_parser("probe", help="send speed and protocol probes to the server of a configuration")
+    p.add_argument("--config", type=Path, required=True)
+    p.add_argument("--out", type=Path, help=f"directory, the files go to <out>/probes/"
+                                            f" (default: {DEFAULT_OUT}/probe-<UTC time>-<config>)")
+    p.add_argument("--kind", choices=["speed", "protocol", "all"], default="all")
+    p.add_argument("--target", type=int, action="append", dest="targets",
+                   help="prompt tokens of a speed request, can repeat (default: 1000, 23000, 60000, 120000)")
+    p.add_argument("--max-context", type=int, help="do not send speed requests above this count of prompt tokens")
+    p.add_argument("--decode-tokens", type=int, default=probe.DECODE_TOKENS)
+    p.add_argument("--timeout", type=float, default=900.0, help="seconds for each request (default: 900)")
+    p.set_defaults(func=cmd_probe)
     return parser.parse_args(argv)
 
 
@@ -177,3 +202,40 @@ def cmd_run(args: argparse.Namespace) -> int:
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return 0 if ok else 1
+
+
+def _load_runs(dirs: list[Path]) -> list:
+    for d in dirs:
+        if not d.is_dir():
+            raise ConfigError(f"{d} is not a directory")
+    return [load_run(d) for d in dirs]
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    text = render_report(_load_runs(args.runs))
+    if args.out:
+        args.out.write_text(text)
+        print(f"report: {args.out}")
+    else:
+        print(text, end="")
+    return 0
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    print(compare_runs(*_load_runs([args.run_a, args.run_b])), end="")
+    return 0
+
+
+def cmd_probe(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    out_dir = args.out or DEFAULT_OUT / f"probe-{make_run_id(config.name)}"
+    server = config.server
+    kinds = ("speed", "protocol") if args.kind == "all" else (args.kind,)
+    paths = probe.probe_server(
+        server.url, server.api_key_file.read_text().strip(), server.model, out_dir / "probes", kinds,
+        context_tokens=server.context_tokens, max_context=args.max_context,
+        targets=args.targets or probe.DEFAULT_TARGETS, decode_tokens=args.decode_tokens, timeout_s=args.timeout,
+        config={"name": config.name, "sha256": config.sha256})
+    for path in paths.values():
+        print(f"probe: {path}")
+    return 0
