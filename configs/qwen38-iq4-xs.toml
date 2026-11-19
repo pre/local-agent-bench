@@ -1,0 +1,6 @@
+# Quant UD-IQ4_XS in place of UD-Q4_K_XL.
+base = "qwen38-base.toml"
+name = "qwen38-iq4-xs"
+
+[server]
+model_file = "UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00004.gguf"

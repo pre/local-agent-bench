@@ -1,0 +1,7 @@
+# KV cache f16 in place of q8_0.
+base = "qwen38-base.toml"
+name = "qwen38-kv-f16"
+
+[server.args]
+-ctk = "f16"
+-ctv = "f16"

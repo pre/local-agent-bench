@@ -1,0 +1,44 @@
+# Qwen3.8-Flash-Next in a llama-server container that the harness starts and stops.
+# The same effective settings as the server llama-qwen38 of ~/dev/local-llm/llama-server
+# ("just up-mtp"): UD-Q4_K_XL, MTP head, context 131072, KV cache q8_0, one slot.
+# The variant files (base = "qwen38-base.toml") change one value each.
+name = "qwen38-base"
+
+[server]
+mode = "managed"
+image = "docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:a01d3ea5b7cbc64e2969be2a833fd5d665fb888d73447de52a54375a7a2fcb76"
+models_dir = "~/models/qwen3.8-flash-next"
+model_file = "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf"
+model = "qwen3.8-flash-next"   # --alias, and the model ID for Claude Code
+context_tokens = 131072        # -c, and CLAUDE_CODE_MAX_CONTEXT_TOKENS
+chat_template = "templates/qwen38-flash-next.jinja"
+api_key_file = "~/.config/llama-server/api-key"
+port = 8090                    # not 8080, so a Claude Code profile for llama-qwen38 does not use this server
+gtt_max_used_mib = 12288
+
+[server.args]
+-ngl = 999
+-fa = "on"
+-np = 1                        # one slot gets the full context
+-lzm = "on"                    # read the n-gram table from disk on demand. Never add "-lm mmap"
+-ctk = "q8_0"
+-ctv = "q8_0"
+--jinja = true
+--temp = 1.0                   # sampling of the model card for thinking mode
+--top-p = 0.95
+--top-k = 20
+--min-p = 0.0
+
+[server.draft]
+model_file = "MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf"
+args = { --spec-type = "draft-mtp", --spec-draft-n-max = 3 }
+
+[client]
+image = "localhost/llm-eval-agent:latest"
+config_dir = "client-config"
+
+[client.env]
+# Keep the start of the system prompt stable, so llama-server can use its prompt cache again.
+CLAUDE_CODE_ATTRIBUTION_HEADER = "0"
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"

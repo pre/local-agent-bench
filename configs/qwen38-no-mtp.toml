@@ -1,0 +1,6 @@
+# No MTP draft head (no speculative decoding). The output must not change, only the speed.
+base = "qwen38-base.toml"
+name = "qwen38-no-mtp"
+
+[server.draft]
+model_file = ""

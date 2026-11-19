@@ -1,0 +1,6 @@
+# Reasoning effort low. The chat template accepts xhigh (the default), medium and low.
+base = "qwen38-base.toml"
+name = "qwen38-effort-low"
+
+[server.args]
+--chat-template-kwargs = '{"reasoning_effort":"low"}'

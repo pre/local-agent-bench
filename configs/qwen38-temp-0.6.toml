@@ -1,0 +1,6 @@
+# Temperature 0.6 in place of 1.0 of the model card.
+base = "qwen38-base.toml"
+name = "qwen38-temp-0.6"
+
+[server.args]
+--temp = 0.6

@@ -1,0 +1,6 @@
+# Context 65536 in place of 131072. CLAUDE_CODE_MAX_CONTEXT_TOKENS follows.
+base = "qwen38-base.toml"
+name = "qwen38-ctx-65536"
+
+[server]
+context_tokens = 65536

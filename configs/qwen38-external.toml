@@ -9,6 +9,7 @@ api_key_file = "~/.config/llama-server/api-key"
 model = "qwen3.8-flash-next"   # the --alias of llama-server
 context_tokens = 131072        # the -c value of llama-server
 agent_network = "proxy"
+container = "llama-qwen38"      # its log gives the speed values of a trial
 
 [client]
 image = "localhost/llm-eval-agent:latest"
