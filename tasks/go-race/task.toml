@@ -1,0 +1,7 @@
+id = "go-race"
+title = "Correct the dispatcher counters under load"
+category = "bugfix"
+language = "go"
+quick = false
+timeout_s = 1800
+max_turns = 60
