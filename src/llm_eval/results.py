@@ -1,8 +1,9 @@
 """Read the stream-json transcript of Claude Code, decide the outcome of a trial
-and remove the API key from the result files."""
+and remove the secret values from the result files."""
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,7 @@ class TranscriptSummary:
     tool_errors: int
     api_errors: int
     error_texts: tuple[str, ...]
+    models: tuple[str, ...] = ()  # the model IDs of the API responses
 
     @property
     def tokens(self) -> dict | None:
@@ -54,16 +56,19 @@ def read_events(path: Path) -> list[dict]:
 def summarize_transcript(path: Path) -> TranscriptSummary:
     result, version = None, None
     tool_calls = tool_errors = api_errors = assistant_messages = 0
-    error_texts = []
+    error_texts, models = [], set()
     for event in read_events(path):
         kind = event.get("type")
-        content = event.get("message", {}).get("content", [])
+        message = event.get("message", {})
+        content = message.get("content", [])
         if kind == "system" and event.get("subtype") == "init":
             version = event.get("claude_code_version")
         elif kind == "system" and event.get("subtype") == "api_retry":
             api_errors += 1
         elif kind == "assistant":
             assistant_messages += 1
+            if message.get("model"):
+                models.add(message["model"])
             tool_calls += sum(1 for block in content if block.get("type") == "tool_use")
             if event.get("error"):
                 api_errors += 1
@@ -73,7 +78,8 @@ def summarize_transcript(path: Path) -> TranscriptSummary:
         elif kind == "result":
             result = event
     turns = result.get("num_turns", assistant_messages) if result else assistant_messages
-    return TranscriptSummary(result, version, turns, tool_calls, tool_errors, api_errors, tuple(error_texts))
+    return TranscriptSummary(result, version, turns, tool_calls, tool_errors, api_errors, tuple(error_texts),
+                             tuple(sorted(models)))
 
 
 def classify(agent: RunResult, summary: TranscriptSummary, check: CheckResult | None) -> tuple[bool, str | None, str | None]:
@@ -99,15 +105,27 @@ def classify(agent: RunResult, summary: TranscriptSummary, check: CheckResult | 
     return True, None, None
 
 
-def redact_tree(root: Path, secret: str, replacement: str = "<redacted>") -> int:
-    """Replace `secret` in each regular file below root. Return the count of changed files."""
-    needle, changed = secret.encode(), 0
+def secret_values(secret_env: dict[str, str]) -> list[str]:
+    """The values to redact: each value of the secret environment, and also the
+    value of each "Name: value" line of ANTHROPIC_CUSTOM_HEADERS (a subscription
+    key). The longest value comes first, so it is replaced before its parts."""
+    values = set(secret_env.values())
+    for line in secret_env.get("ANTHROPIC_CUSTOM_HEADERS", "").splitlines():
+        values.add(line.partition(":")[2].strip())
+    return sorted(filter(None, values), key=len, reverse=True)
+
+
+def redact_tree(root: Path, secrets: Iterable[str], replacement: str = "<redacted>") -> int:
+    """Replace each secret in each regular file below root. Return the count of changed files."""
+    needles, changed = [s.encode() for s in secrets if s], 0
     for path in root.rglob("*"):
         if path.is_symlink() or not path.is_file():
             continue
-        data = path.read_bytes()
-        if needle in data:
-            path.write_bytes(data.replace(needle, replacement.encode()))
+        data = original = path.read_bytes()
+        for needle in needles:
+            data = data.replace(needle, replacement.encode())
+        if data != original:
+            path.write_bytes(data)
             changed += 1
     return changed
 

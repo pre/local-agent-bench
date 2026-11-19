@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from llm_eval.podman import RunResult
-from llm_eval.results import classify, redact_tree, summarize_transcript
+from llm_eval.results import classify, redact_tree, secret_values, summarize_transcript
 from llm_eval.workspace import CheckResult
 
 RESULT_OK = {
@@ -123,9 +123,39 @@ def test_redact_tree_replaces_secret_in_all_files(tmp_path):
     (tmp_path / "z.txt").write_text("clean")
     (tmp_path / "link").symlink_to(tmp_path / "z.txt")
 
-    changed = redact_tree(tmp_path, "SECRET1")
+    changed = redact_tree(tmp_path, ["SECRET1"])
 
     assert changed == 2
     assert (tmp_path / "a" / "x.txt").read_text() == "token=<redacted> and <redacted>"
     assert (tmp_path / "y.bin").read_bytes() == b"\x00<redacted>\x00"
     assert (tmp_path / "z.txt").read_text() == "clean"
+
+
+def test_redact_tree_replaces_each_secret_and_ignores_empty_values(tmp_path):
+    (tmp_path / "x.txt").write_text("a=SECRET1 b=SECRET2 c=")
+
+    changed = redact_tree(tmp_path, ["SECRET1", "", "SECRET2"])
+
+    assert changed == 1
+    assert (tmp_path / "x.txt").read_text() == "a=<redacted> b=<redacted> c="
+
+
+def test_secret_values_add_the_values_of_custom_headers():
+    env = {"ANTHROPIC_API_KEY": "k", "ANTHROPIC_CUSTOM_HEADERS": "Sub-Key: abc123\nOther: x y", "EMPTY": ""}
+
+    values = secret_values(env)
+
+    assert set(values) == {"k", "Sub-Key: abc123\nOther: x y", "abc123", "x y"}
+    assert values == sorted(values, key=len, reverse=True)
+
+
+def test_summarize_reads_models_and_cost(tmp_path):
+    def reply(model):
+        return {"type": "assistant", "message": {"model": model, "content": [{"type": "text", "text": "x"}]}}
+
+    result = {**RESULT_OK, "total_cost_usd": 0.42, "modelUsage": {"Claude-Test-1": {"costUSD": 0.42}}}
+    s = summarize_transcript(write_transcript(tmp_path, [reply("claude-test-1"), reply("claude-test-1"),
+                                                         reply("other"), result]))
+
+    assert s.models == ("claude-test-1", "other")
+    assert s.result["total_cost_usd"] == 0.42

@@ -5,10 +5,11 @@ import pytest
 
 from fakes import FakePodman, check_by_marker
 from llm_eval.config import load_config
-from llm_eval.server import ExternalServer, ServerError
+from llm_eval.podman import run_args
+from llm_eval.server import ExternalServer, RemoteServer, ServerError, open_server
 from llm_eval.task import load_task
 from llm_eval.trial import RunContext, agent_env, execute_run, make_run_id
-from test_config import EXTERNAL
+from test_config import EXTERNAL, REMOTE
 from test_results import RESULT_OK, tool_result, tool_use
 from test_task import make_task
 
@@ -18,6 +19,7 @@ SECRET = "sk-secret-123"
 @pytest.fixture(autouse=True)
 def healthy(monkeypatch):
     monkeypatch.setattr(ExternalServer, "check_health", lambda self: None)
+    monkeypatch.setattr(RemoteServer, "check_health", lambda self: None)
 
 
 @pytest.fixture
@@ -43,10 +45,10 @@ def agent_that(events, fix=True, code=0):
     return behaviour
 
 
-def run(root: Path, podman, reps=1, observers=(), resume=False):
-    cfg = load_config(root / "c.toml")
+def run(root: Path, podman, reps=1, observers=(), resume=False, config="c.toml"):
+    cfg = load_config(root / config)
     out = root / "out"
-    with ExternalServer(cfg.server, root / "scratch") as server:
+    with open_server(cfg.server, root / "scratch") as server:
         ctx = RunContext("run1", out, cfg, root, podman, server, list(observers))
         results = execute_run(ctx, [load_task(root / "tasks" / "t1")], reps, resume=resume)
     return results, out
@@ -254,3 +256,76 @@ def test_unhealthy_server_stops_the_run(root, monkeypatch):
         run(root, podman)
 
     assert podman.of_kind("agent") == []
+
+
+API_KEY = "gw-api-key-77"
+SUBSCRIPTION_KEY = "0123456789abcdef0123456789abcdef"
+
+
+@pytest.fixture
+def remote_root(root, tmp_path):
+    profile = tmp_path / "profile.sh"
+    profile.write_text(f'export ANTHROPIC_API_KEY="{API_KEY}"\n'
+                       f'export ANTHROPIC_CUSTOM_HEADERS="Sub-Key: {SUBSCRIPTION_KEY}"\n')
+    (root / "remote.toml").write_text(REMOTE.replace("~/profile.sh", str(profile)))
+    return root
+
+
+def leaking_agent(spec, m):
+    """An agent that writes all its secret values (and the subscription key alone)
+    into its work, its transcript and its configuration directory."""
+    leak = " ".join([*spec.secret_env.values(), SUBSCRIPTION_KEY])
+    (m["/work"] / "fixed.txt").write_text(leak)
+    (m["/claude-config"] / "session.json").write_text(json.dumps({"env": dict(spec.secret_env)}))
+    reply = {"type": "assistant", "message": {"model": "claude-test-1", "content": [{"type": "text", "text": leak}]}}
+    result = {**RESULT_OK, "total_cost_usd": 0.42, "modelUsage": {"Claude-Test-1": {"costUSD": 0.42}}}
+    return 0, "".join(json.dumps(e) + "\n" for e in [reply, result])
+
+
+def test_remote_trial_gets_the_profile_secrets_and_no_local_key(remote_root):
+    podman = FakePodman(agent=leaking_agent, check=check_by_marker())
+
+    run(remote_root, podman, config="remote.toml")
+
+    (spec,) = podman.of_kind("agent")
+    assert spec.secret_env == {"ANTHROPIC_API_KEY": API_KEY, "ANTHROPIC_CUSTOM_HEADERS": f"Sub-Key: {SUBSCRIPTION_KEY}"}
+    assert spec.network == "none"
+    assert spec.env["ANTHROPIC_BASE_URL"] == "https://gateway.example.org/api"
+    assert spec.env["HTTPS_PROXY"] == "http://127.0.0.1:8080"
+    assert spec.env["NODE_EXTRA_CA_CERTS"] == spec.env["SSL_CERT_FILE"] == "/run/llm-eval-ca.crt"
+    for name in ("ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL",
+                 "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
+        assert spec.env[name] == "Claude-Test-1"
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in spec.env
+    assert "/run/llm-eval-ca.crt" in {m.container for m in spec.mounts}
+
+
+def test_remote_secrets_are_not_in_podman_arguments_or_trial_files(remote_root):
+    podman = FakePodman(agent=leaking_agent, check=check_by_marker())
+
+    results, out = run(remote_root, podman, config="remote.toml")
+
+    assert results[0]["passed"] is True
+    secrets = [API_KEY.encode(), SUBSCRIPTION_KEY.encode()]
+    arguments = [" ".join(run_args(s)) for s in [*podman.specs, *podman.outputs]]
+    arguments += [" ".join(call) for call in podman.calls]
+    for secret in secrets:
+        assert all(secret.decode() not in a for a in arguments)
+    files = [p for p in out.rglob("*") if p.is_file()]
+    assert out / "t1-r1" / "claude-config" / "session.json" in files
+    for path in files:
+        data = path.read_bytes()
+        assert not any(secret in data for secret in secrets), path
+
+
+def test_result_has_cost_and_the_models_of_the_responses(remote_root):
+    podman = FakePodman(agent=leaking_agent, check=check_by_marker())
+
+    results, out = run(remote_root, podman, config="remote.toml")
+
+    assert results[0]["total_cost_usd"] == 0.42
+    assert results[0]["models"] == ["claude-test-1"]
+    assert results[0]["model_usage"] == {"Claude-Test-1": {"costUSD": 0.42}}
+    run_json = json.loads((out / "run.json").read_text())
+    assert run_json["reported_models"] == ["claude-test-1"]
+    assert run_json["server"]["mode"] == "remote"

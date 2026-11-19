@@ -16,7 +16,8 @@ from typing import Protocol
 
 from .config import Config
 from .podman import ContainerSpec, Mount
-from .results import classify, redact_tree, summarize_transcript, write_json
+from .profile_secrets import read_profile_secrets
+from .results import classify, redact_tree, secret_values, summarize_transcript, write_json
 from .server import ExternalServer
 from .task import Task
 from .workspace import collect_diff, container_name, init_workspace, run_check
@@ -43,6 +44,9 @@ class RunContext:
     observers: list[TrialObserver] = field(default_factory=list)
     image: dict | None = None
     claude_code_version: str | None = None
+    # The secret environment of Claude Code: the key of a local server, or the
+    # values of client.secrets. execute_run sets it.
+    secret_env: dict[str, str] = field(default_factory=dict)
 
 
 def make_run_id(config_name: str, now: datetime | None = None) -> str:
@@ -55,14 +59,16 @@ def utc_now() -> str:
 
 
 def agent_env(cfg: Config, base_url: str) -> dict[str, str]:
-    """The environment of Claude Code in the agent container, without the API key."""
+    """The environment of Claude Code in the agent container, without the secrets.
+    All model tiers use the one model, so the result belongs to that model."""
     model = cfg.server.model
     env = {
         "ANTHROPIC_BASE_URL": base_url,
         "ANTHROPIC_MODEL": model,
         "CLAUDE_CODE_SUBAGENT_MODEL": model,
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(cfg.server.context_tokens),
     }
+    if cfg.server.context_tokens:
+        env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(cfg.server.context_tokens)
     for tier in ("FABLE", "OPUS", "SONNET", "HAIKU"):
         env[f"ANTHROPIC_DEFAULT_{tier}_MODEL"] = model
     return {**env, **cfg.client.env}
@@ -95,8 +101,8 @@ def run_trial(ctx: RunContext, task: Task, rep: int) -> dict:
         image=ctx.config.client.image,
         command=access.command_prefix + claude_command(task),
         mounts=[Mount(work, "/work"), Mount(trial_dir / "claude-config", "/claude-config"), *access.mounts],
-        env=agent_env(ctx.config, access.base_url),
-        secret_env={"ANTHROPIC_AUTH_TOKEN": ctx.server.api_key()},
+        env={**agent_env(ctx.config, access.base_url), **access.env},
+        secret_env=ctx.secret_env,
         network=access.network,
     )
     for observer in ctx.observers:
@@ -132,6 +138,9 @@ def run_trial(ctx: RunContext, task: Task, rep: int) -> dict:
         "tool_errors": summary.tool_errors,
         "api_errors": summary.api_errors,
         "tokens": summary.tokens,
+        "total_cost_usd": claude_result.get("total_cost_usd"),  # the estimate of Claude Code
+        "models": list(summary.models),
+        "model_usage": claude_result.get("modelUsage"),
         "agent": {
             "exit_code": agent.exit_code,
             "timed_out": agent.timed_out,
@@ -153,7 +162,7 @@ def run_trial(ctx: RunContext, task: Task, rep: int) -> dict:
         "finished_at": utc_now(),
     }
     write_json(trial_dir / "result.json", result)
-    redact_tree(trial_dir, ctx.server.api_key())
+    redact_tree(trial_dir, secret_values(ctx.secret_env))
     return result
 
 
@@ -173,14 +182,15 @@ def error_result(ctx: RunContext, task: Task, rep: int, error: Exception, starte
         "failure_reason": "harness_error",
         "failure_detail": f"{type(error).__name__}: {error}"[:500],
         **dict.fromkeys(["wall_time_s", "check_time_s", "turns", "tool_calls", "tool_errors", "api_errors",
-                         "tokens", "agent", "verify", "server", "memory", "baseline"]),
+                         "tokens", "total_cost_usd", "models", "model_usage", "agent", "verify", "server",
+                         "memory", "baseline"]),
         "claude_code_version": ctx.claude_code_version,
         "image": ctx.image,
         "started_at": started,
         "finished_at": utc_now(),
     }
     write_json(trial_dir / "result.json", result)
-    redact_tree(trial_dir, ctx.server.api_key())
+    redact_tree(trial_dir, secret_values(ctx.secret_env))
     return result
 
 
@@ -197,6 +207,7 @@ def execute_run(ctx: RunContext, tasks: list[Task], reps: int, resume: bool = Fa
     An exception in a trial gives a result with failure_reason "harness_error".
     With `resume`, the trials that have a result.json do not run again.
     """
+    ctx.secret_env = {**ctx.server.secret_env(), **read_profile_secrets(ctx.config.client.secrets)}
     ctx.out_dir.mkdir(parents=True, exist_ok=True)
     image = ctx.config.client.image
     ctx.image = ctx.podman.image_info(image)
@@ -241,7 +252,8 @@ def execute_run(ctx: RunContext, tasks: list[Task], reps: int, resume: bool = Fa
         verdict = "PASS" if result["passed"] else f"FAIL {result['failure_reason']}"
         log(ctx, f"{utc_now()} [{len(results)}/{len(trials)}] {ctx.config.name} {task.id} r{rep} {verdict} "
                  f"wall {result['wall_time_s']} s passed {passed}/{len(results)}")
-        run_info.update(trials=len(results), passed=passed)
+        models = {model for r in results for model in r.get("models") or []}
+        run_info.update(trials=len(results), passed=passed, reported_models=sorted(models))
         write_json(run_file, run_info)
     run_info["finished_at"] = utc_now()
     write_json(run_file, run_info)
