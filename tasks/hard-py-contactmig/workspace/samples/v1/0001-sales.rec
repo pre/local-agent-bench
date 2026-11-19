@@ -1,0 +1,13 @@
+# export of the sales team, 2026-10-01
+id: s-1001
+name: Mira Okafor
+email: mira.okafor@example.com
+tags: customer, emea
+updated: 2026-09-30T14:02:11Z
+
+id: s-1002
+name: Jonas Berg
+email: jonas@berg-consulting.example
+email: j.berg@example.net
+tags: partner
+updated: 2026-09-12T08:00:00+02:00

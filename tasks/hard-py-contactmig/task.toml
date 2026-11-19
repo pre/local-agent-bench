@@ -1,0 +1,7 @@
+id = "hard-py-contactmig"
+title = "Implement the contact store migration from its specification"
+category = "feature"
+language = "python"
+quick = false
+timeout_s = 3600
+max_turns = 100

@@ -1,0 +1,2 @@
+# The v1 samples have CR LF line ends and legacy encodings on purpose.
+workspace/samples/** -text
