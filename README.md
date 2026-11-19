@@ -168,12 +168,16 @@ The four new configurations use `-lm none` (resident load, recommended on Strix 
 ```sh
 just download-model gpt-oss-120b qwen3-coder-next   # detached container "model-download"
 podman logs -f model-download                       # progress, "VERIFIED <model>" or "FAILED <model>"
-just verify-model gpt-oss-120b                      # SHA-256 check on the host
+just verify-model gpt-oss-120b                      # SHA-256 check on the host, downloads nothing
 ```
 
 `download/models.tsv` has one line for each file: model (the directory below `~/models`), repository, revision, date of the revision, path, size and SHA-256 (from the tree API of Hugging Face). The URL has the pinned revision, not `main`.
 
-`download/download.sh` runs in an Alpine container (pinned by digest) with the CA bundle of the host. It does the models one after the other. For each model it writes `expected-sha256.tsv` and `source.txt` in the model directory, downloads the missing files with aria2 (16 connections for each file, `.part` files, a second run continues them), and checks each file with SHA-256 at low CPU and I/O priority. A file that does not match is downloaded again once. `RATE` (default `28M`, aria2 unit MiB/s) is the limit for all connections together.
+`download/download.sh` runs in an Alpine container (pinned by digest) with the CA bundle of the host. It does the models one after the other. For each model it writes `expected-sha256.tsv` and `source.txt` in the model directory and downloads the missing files with aria2 (16 connections for each file, `.part` files, a second run continues them). `RATE` (default `28M`, aria2 unit MiB/s) is the limit for all connections together.
+
+When a `.part` file is complete, the script checks it with SHA-256 at low CPU and I/O priority. Only a file that matches gets its final name. The harness and the server use only the final name, so they cannot load a file that is not verified. A file that does not match becomes `<file>.bad` and is downloaded again once. The next download of that file removes `<file>.bad`. At the end the script checks all files of the model with their final names and prints `VERIFIED <model>` or `FAILED <model>`.
+
+`just verify-model <model>...` (`download.sh --verify <model>...` with `TSV` and `MODELS` set to the paths on the host) checks the files with their final names against `download/models.tsv`. It downloads nothing. The exit code is 1 when a file is missing (also a file that is only a `.part` file) or when its SHA-256 does not match. Use it before a run with a model that a download changed.
 
 ## Cloud reference models
 

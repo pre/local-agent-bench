@@ -79,10 +79,6 @@ download-model +names:
       "${mounts[@]}" {{alpine}} sh /run/download.sh {{names}}
     echo "Progress: podman logs -f model-download"
 
-# Check the files of downloaded models with SHA-256, at low CPU and I/O priority
-[script("bash")]
+# Check the model files against download/models.tsv with SHA-256, at low CPU and I/O priority. Downloads nothing
 verify-model +names:
-    set -euo pipefail
-    for name in {{names}}; do
-      (cd "{{models_root}}/$name" && cut -f1 expected-sha256.tsv | nice -n 19 ionice -c 3 sha256sum -c -)
-    done
+    TSV="{{justfile_directory()}}/download/models.tsv" MODELS="{{models_root}}" sh download/download.sh --verify {{names}}
