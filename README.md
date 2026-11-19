@@ -373,7 +373,7 @@ The default run directory is `~/daybook-evidence/local-llm/eval/<run-id>/`, wher
     harness_error.txt      only for a harness error: the traceback
 ```
 
-`result.json` has: `passed`, `score`, `failure_reason`, `failure_detail`, `wall_time_s` (agent container), `turns`, `tool_calls`, `tool_errors`, `api_errors`, `permission_denials` (the count of `permission_denied` events: Claude Code refused a command, for example a dangerous `rm`, also with `--dangerously-skip-permissions`), `tokens`, `total_cost_usd`, `model_usage` and `models` (see "Cloud reference models"), `agent` (exit code, result subtype, durations), `verify`, `server` and `memory` (see "Observers"), `claude_code_version`, `image` (ID and digest), `config` (name, path, SHA-256) and `baseline` (start commit).
+`result.json` has: `hard` (the `hard` value of the task), `passed`, `score`, `failure_reason`, `failure_detail`, `wall_time_s` (agent container), `turns`, `tool_calls`, `tool_errors`, `api_errors`, `permission_denials` (the count of `permission_denied` events: Claude Code refused a command, for example a dangerous `rm`, also with `--dangerously-skip-permissions`), `tokens`, `total_cost_usd`, `model_usage` and `models` (see "Cloud reference models"), `agent` (exit code, result subtype, durations), `verify`, `server` and `memory` (see "Observers"), `claude_code_version`, `image` (ID and digest), `config` (name, path, SHA-256) and `baseline` (start commit).
 
 A trial passes only if Claude Code stops normally and the check passes. The failure reasons, in the order the harness examines them:
 
@@ -447,7 +447,7 @@ uv run llm-eval report <run-dir>... --out report.md
 | Part | Content |
 |---|---|
 | Runs | Each run directory: trials found and expected, start and end time. A run that is not finished, or that has fewer results than tasks times repetitions, is marked PARTIAL |
-| Configurations | One row for each configuration: trials counted, pass rate with a 95 % Wilson interval, mean score, median and total wall time, prompt and decode tokens per second, draft acceptance, GTT peak, lowest MemAvailable, lowest SwapFree, count of each failure reason, count of harness errors |
+| Configurations | One row for each configuration: trials counted, pass rate with a 95 % Wilson interval, passes of the tasks that are not hard (Base pass) and of the hard tasks (Hard pass), mean score, median and total wall time, prompt and decode tokens per second, draft acceptance, GTT peak, lowest MemAvailable, lowest SwapFree, count of each failure reason, count of harness errors |
 | Memory | One row for each configuration: GTT limit, GTT before start, GTT after load, GTT peak, Model GTT, GTT margin, lowest MemAvailable, lowest SwapFree, highest PSI full avg10 |
 | Tasks | Task against configuration: passes of the counted repetitions (for example `2/3`). The mean score is shown when a trial has a partial score |
 | Failed trials | For each configuration: run, task, repetition, failure reason, score, failed check names, turns, wall time |
@@ -458,6 +458,7 @@ Rules:
 
 - A configuration is a name and the SHA-256 of its values. The same name with a different SHA-256 is a different row, and the row label has the first 8 characters of the SHA-256.
 - A trial with `harness_error` is not a model failure. It is not in the pass rate, the mean score and the median wall time. The total wall time includes it.
+- Base pass and Hard pass are `passes/trials` of the counted trials, or `-` when the configuration has no trial of that kind. The report reads the `hard` value of each `result.json`, not the `tasks/` directory. A result of an older harness has no `hard` value: then a task ID that starts with `hard-` is a hard task.
 - Rows are sorted by pass rate, then by median wall time.
 - Speed values come from the `server` dictionary of `result.json`: the sum of the tokens divided by the sum of the seconds of all trials, not a mean of rates. Draft acceptance is the sum of accepted tokens divided by the sum of generated draft tokens.
 - Memory values come from the `memory` dictionary of the trials and from `probes/memory.json`: the peak of the peaks and the minimum of the minimums. GTT peak also includes `gtt_used_load_peak_mib` of `run.json`. A value is `n/a` when no trial has it.

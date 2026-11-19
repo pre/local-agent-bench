@@ -10,12 +10,13 @@ SHA_B = "b" * 64
 def trial(task: str, rep: int = 1, passed: bool = True, reason: str | None = None, score: float | None = None,
           wall: float = 100.0, name: str = "c1", sha: str = SHA_A, server: dict | None = None,
           memory: dict | None = None, failed_checks: tuple[str, ...] = (), turns: int = 10,
-          started: str = "2026-11-19T10:00:00+00:00") -> dict:
+          started: str = "2026-11-19T10:00:00+00:00", hard: bool | None = None) -> dict:
     if score is None and reason != "harness_error":
         score = 1.0 if passed else 0.0
     checks = [{"name": "build", "passed": True}] + [{"name": n, "passed": False} for n in failed_checks]
+    extra = {} if hard is None else {"hard": hard}  # an older result has no "hard" key
     return {
-        "schema": 1, "task": task, "rep": rep, "config": {"name": name, "path": f"configs/{name}.toml", "sha256": sha},
+        **extra, "schema": 1, "task": task, "rep": rep, "config": {"name": name, "path": f"configs/{name}.toml", "sha256": sha},
         "passed": passed, "score": score, "failure_reason": None if passed else (reason or "verify_failed"),
         "failure_detail": None, "wall_time_s": wall, "turns": turns,
         "verify": {"passed": passed, "score": score, "checks": checks} if score is not None else None,

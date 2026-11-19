@@ -72,6 +72,7 @@ def test_trial_pass_writes_all_files(root):
     assert result["turns"] == 4
     assert result["tool_calls"] == 1
     assert result["permission_denials"] == 0
+    assert result["hard"] is False
     assert result["tokens"]["input"] == 100
     assert result["claude_code_version"] == "2.1.328"
     assert result["image"]["digest"] == "sha256:digest"

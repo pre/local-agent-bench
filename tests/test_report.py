@@ -170,6 +170,32 @@ def test_report_lists_failed_trials(two_configs):
     assert "timeout" in text
 
 
+def config_row(text: str, label: str) -> dict[str, str]:
+    section = text.split("## Configurations", 1)[1].split("\n## ", 1)[0]
+    lines = [line for line in section.splitlines() if line.startswith("| ")]
+    header = [cell.strip() for cell in lines[0].strip("|").split("|")]
+    row = next(line for line in lines if line.startswith(f"| {label} |"))
+    return dict(zip(header, (cell.strip() for cell in row.strip("|").split("|"))))
+
+
+def test_base_and_hard_pass_come_from_the_hard_flag_of_the_trials(tmp_path):
+    trials = [trial("t1"), trial("t2", passed=False), trial("t3", hard=True),
+              trial("hard-old", passed=False),  # no "hard" key: the ID decides
+              trial("hard-new", hard=False),
+              trial("hard-err", passed=False, reason="harness_error")]
+
+    row = config_row(render_report([load_run(write_run(tmp_path / "r", trials))]), "c1")
+
+    assert row["Pass rate (95 % interval)"].startswith("3/5,")
+    assert (row["Base pass"], row["Hard pass"]) == ("2/3", "1/2")
+
+
+def test_base_and_hard_pass_without_trials_of_a_tier(tmp_path):
+    row = config_row(render_report([load_run(write_run(tmp_path / "r", [trial("t1")]))]), "c1")
+
+    assert (row["Base pass"], row["Hard pass"]) == ("1/1", "-")
+
+
 def test_report_marks_partial_runs_and_limits(two_configs):
     text = render_report(two_configs)
 

@@ -269,6 +269,16 @@ def _pass_rate(passes: int, n: int) -> str:
     return f"{passes}/{n}, {_pct(passes / n)} ({lo * 100:.0f} to {hi * 100:.0f} %)"
 
 
+def _is_hard(trial: dict) -> bool:
+    """A result of an older harness has no "hard" key: then the task ID decides."""
+    return trial.get("hard", trial["task"].startswith("hard-"))
+
+
+def _tier_passes(trials: list[dict], hard: bool) -> str:
+    chosen = [t for t in trials if _is_hard(t) == hard]
+    return f"{sum(t['passed'] for t in chosen)}/{len(chosen)}" if chosen else "-"
+
+
 def _table(header: list[str], rows: list[list[str]]) -> list[str]:
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     return lines + ["| " + " | ".join(str(c) for c in row) + " |" for row in rows]
@@ -293,13 +303,14 @@ def _runs_section(runs: list[Run]) -> list[str]:
 
 
 def _config_table(rows: list[ConfigStats]) -> list[str]:
-    header = ["Configuration", "Trials", "Pass rate (95 % interval)", "Mean score", "Median wall s",
-              "Total wall s", "Prompt tok/s", "Decode tok/s", "Draft acceptance", "GTT peak GiB",
+    header = ["Configuration", "Trials", "Pass rate (95 % interval)", "Base pass", "Hard pass", "Mean score",
+              "Median wall s", "Total wall s", "Prompt tok/s", "Decode tok/s", "Draft acceptance", "GTT peak GiB",
               "Min MemAvailable GiB", "Min SwapFree GiB", "Failures", "Harness errors"]
     body = []
     for s in rows:
         failures = ", ".join(f"{reason} {count}" for reason, count in sorted(s.failures.items())) or "-"
-        body.append([s.label, s.n, _pass_rate(s.passes, s.n), _num(s.mean_score, 2), _num(s.median_wall),
+        body.append([s.label, s.n, _pass_rate(s.passes, s.n), _tier_passes(s.counted, False),
+                     _tier_passes(s.counted, True), _num(s.mean_score, 2), _num(s.median_wall),
                      _num(s.total_wall), _num(s.prompt_tps), _num(s.decode_tps), _num(s.draft_acceptance, 2),
                      _gib(s.gtt_peak_mib), _gib(s.mem_available_min_mib), _gib(s.swap_free_min_mib), failures,
                      s.harness_errors])
@@ -309,9 +320,10 @@ def _config_table(rows: list[ConfigStats]) -> list[str]:
         if len(shas) > 1:
             lines += ["", f"Configuration `{name}` has {len(shas)} different SHA-256 values."
                       " Each value is a separate row."]
-    lines += ["", "Pass rate and mean score do not include harness errors. Median wall time is for the counted"
-              " trials, total wall time is for all trials. Speed values are for all trials. Memory values are for"
-              " all trials and the probes. GTT peak also includes the server start, see \"Memory\"."]
+    lines += ["", "Pass rate and mean score do not include harness errors. Base pass and Hard pass are the passes"
+              " of the counted trials of the tasks that are not hard and of the hard tasks. Median wall time is for"
+              " the counted trials, total wall time is for all trials. Speed values are for all trials. Memory"
+              " values are for all trials and the probes. GTT peak also includes the server start, see \"Memory\"."]
     return lines
 
 
