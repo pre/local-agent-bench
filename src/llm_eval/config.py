@@ -1,6 +1,6 @@
 """Configuration files: one TOML file in configs/ with a [server] and a [client] part.
 
-Stage 2 adds "mode = managed" (see _server) and the "base" key (see _read_merged).
+Stage 2 adds "mode = managed" (see _server).
 """
 
 import hashlib
@@ -64,12 +64,32 @@ def load_config(path: Path) -> Config:
     )
 
 
-def _read_merged(path: Path) -> dict[str, Any]:
+def _read_merged(path: Path, seen: tuple[Path, ...] = ()) -> dict[str, Any]:
+    """Read a configuration file. A "base" key names a file (relative to this
+    one) that gives the values that this file does not change. The name of
+    the base file is not inherited."""
+    if path in seen:
+        raise ConfigError(f"{path}: the base files make a loop")
+    if not path.is_file():
+        raise ConfigError(f"{path}: file not found")
     with path.open("rb") as f:
         raw = tomllib.load(f)
-    if "base" in raw:
-        raise ConfigError(f"{path}: the key 'base' is not implemented yet")
-    return raw
+    if "base" not in raw:
+        return raw
+    base = _read_merged((path.parent / raw.pop("base")).resolve(), (*seen, path))
+    base.pop("name", None)
+    return _merge(base, raw)
+
+
+def _merge(base: dict[str, Any], change: dict[str, Any]) -> dict[str, Any]:
+    """Tables merge key by key. Lists and scalars of `change` replace those of `base`."""
+    merged = dict(base)
+    for key, value in change.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _sha256(raw: dict[str, Any]) -> str:
