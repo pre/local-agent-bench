@@ -96,7 +96,7 @@ def test_life_cycle(repo, http_server):
     podman = FakePodman()
     podman.server_log = "server log k1\n"
 
-    readings = iter([500, 800])  # before the start, after the load
+    readings = iter([500, 900, 800])  # before the start, at the health check, after the load
 
     with managed(repo, podman, url=http_server, gtt_used=lambda: next(readings)) as server:
         assert podman.containers[NAME]["labels"] == {"llm-eval.role": "server"}
@@ -131,6 +131,7 @@ def test_life_cycle(repo, http_server):
     assert info["load_seconds"] >= 0
     assert info["gtt_used_before_start_mib"] == 500
     assert info["gtt_used_after_load_mib"] == 800
+    assert info["gtt_used_load_peak_mib"] == 900
     assert info["gtt_total_mib"] == 100000
     json.dumps(info)
 
@@ -154,6 +155,27 @@ def test_gtt_guard_names_the_running_containers(repo):
 
     assert "llama-qwen38" in podman.containers
     assert not any(c[0] in ("run", "stop", "rm") for c in podman.calls)
+
+
+def test_start_stops_when_gtt_comes_near_its_limit(repo, capsys):
+    podman = FakePodman()
+    readings = iter([500, 60000, 96000])
+
+    with pytest.raises(ServerError, match=r"GTT used is 96000 MiB of 100000 MiB.*server.gtt_min_margin_mib = 4096"):
+        managed(repo, podman, gtt_used=lambda: next(readings), timeout=60).__enter__()
+
+    assert NAME not in podman.containers
+    assert ["stop", "-t", "60", NAME] in podman.calls
+    assert (repo / "run" / "server.log").exists()
+
+
+def test_gtt_margin_comes_from_the_configuration(repo, http_server):
+    readings = iter([500, 99000, 99000])
+    margin = "gtt_min_margin_mib = 512\nstart_timeout_s"
+
+    with managed(repo, FakePodman(), url=http_server, gtt_used=lambda: next(readings),
+                 **{"start_timeout_s": margin}) as server:
+        assert server.describe()["gtt_used_load_peak_mib"] == 99000
 
 
 def test_server_that_stops_during_the_start(repo):

@@ -20,7 +20,7 @@ HARNESS_FLAGS = {"--host", "--port", "--api-key-file", "-m", "--model", "-a", "-
 COMMON_KEYS = {"mode", "api_key_file", "model", "context_tokens", "health_path", "agent_network", "agent_url"}
 EXTERNAL_KEYS = COMMON_KEYS | {"url", "container"}
 MANAGED_KEYS = COMMON_KEYS | {"image", "models_dir", "model_file", "port", "args", "draft", "chat_template",
-                              "gtt_max_used_mib", "start_timeout_s"}
+                              "gtt_max_used_mib", "gtt_min_margin_mib", "start_timeout_s"}
 REMOTE_KEYS = {"mode", "url", "model", "context_tokens", "agent_network", "ca_file"}
 
 # A value of an args table: true gives the flag alone, false leaves the flag out.
@@ -48,6 +48,7 @@ class ManagedConfig:
     draft: DraftConfig | None = None
     chat_template: str | None = None  # below templates/ of the repository
     gtt_max_used_mib: int = 12288
+    gtt_min_margin_mib: int = 4096  # the start stops when GTT total minus GTT used is less
     start_timeout_s: int = 900
 
 

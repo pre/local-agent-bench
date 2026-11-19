@@ -208,6 +208,7 @@ def test_loads_managed_server(tmp_path):
     assert managed.chat_template is None
     assert managed.gtt_max_used_mib == 12288
     assert managed.start_timeout_s == 900
+    assert managed.gtt_min_margin_mib == 4096
 
 
 def test_managed_draft_and_template(tmp_path):

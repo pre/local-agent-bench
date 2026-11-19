@@ -334,7 +334,8 @@ class ManagedServer(ExternalServer):
             code, out = self.podman.call(run_args)
             if code != 0:
                 raise ServerError(f"podman run of {MANAGED_CONTAINER} failed: {out.strip()}")
-            self._wait_until_healthy()
+            total = self.gtt_total()
+            load_peak = self._wait_until_healthy(total)
             load_seconds = round(time.monotonic() - began, 1)
             after_load = self.gtt_used()
             self.info = {
@@ -352,7 +353,8 @@ class ManagedServer(ExternalServer):
                 "load_seconds": load_seconds,
                 "gtt_used_before_start_mib": gtt,
                 "gtt_used_after_load_mib": after_load,
-                "gtt_total_mib": self.gtt_total(),
+                "gtt_used_load_peak_mib": max(load_peak, after_load),
+                "gtt_total_mib": total,
             }
             super().__enter__()
         except BaseException:
@@ -414,13 +416,16 @@ class ManagedServer(ExternalServer):
                               f"Running containers:\n{containers.rstrip()}")
         return used
 
-    def _wait_until_healthy(self) -> None:
+    def _wait_until_healthy(self, gtt_total: int) -> int:
+        """Poll /health each second. Return the peak of GTT used during the wait."""
         timeout = self.cfg.managed.start_timeout_s
         deadline = time.monotonic() + timeout
+        peak = 0
         while True:
+            peak = max(peak, self._check_gtt_margin(gtt_total))
             try:
                 self.check_health()
-                return
+                return peak
             except ServerError as e:
                 problem = e
             info = self._inspect()
@@ -430,6 +435,15 @@ class ManagedServer(ExternalServer):
             if time.monotonic() >= deadline:
                 raise ServerError(f"{MANAGED_CONTAINER} is not healthy after {timeout} s: {problem}")
             self.sleep(1)
+
+    def _check_gtt_margin(self, total: int) -> int:
+        """Stop the start before a full GTT stops the desktop. Return GTT used."""
+        used, margin = self.gtt_used(), self.cfg.managed.gtt_min_margin_mib
+        if total - used < margin:
+            raise ServerError(f"GTT used is {used} MiB of {total} MiB during the start of {MANAGED_CONTAINER}, "
+                              f"less free than server.gtt_min_margin_mib = {margin} MiB. The harness stopped "
+                              "the server: the model and its context are too large for the free GTT.")
+        return used
 
     def _version(self) -> str | None:
         """The build line of llama-server. The log does not have it at the default verbosity."""
