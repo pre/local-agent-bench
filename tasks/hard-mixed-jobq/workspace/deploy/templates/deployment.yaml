@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jobq
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: jobq
+spec:
+  replicas: ${REPLICAS}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jobq
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jobq
+        app.kubernetes.io/component: server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "${PORT}"
+        prometheus.io/path: /metrics
+    spec:
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: ${IMAGE}:${IMAGE_TAG}
+          ports:
+            - name: http
+              containerPort: ${PORT}
+          env:
+            - name: JOBQ_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: jobq-config
+                  key: PORT
+            - name: JOBQ_MAX_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: jobq-config
+                  key: MAX_TIMEOUT_SECONDS
+            - name: JOBQ_QUEUE_LIMIT
+              valueFrom:
+                configMapKeyRef:
+                  name: jobq-config
+                  key: QUEUE_LIMIT
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jobq
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: jobq
+spec:
+  replicas: ${REPLICAS}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jobq
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jobq
+        app.kubernetes.io/component: server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9102"
+        prometheus.io/path: /metrics
+    spec:
+      terminationGracePeriodSeconds: ${TERMINATION_GRACE_SECONDS}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: ${IMAGE}:${IMAGE_TAG}
+          ports:
+            - name: api
+              containerPort: 7070
+            - name: metrics
+              containerPort: 9102
+          env:
+            - name: JOBQ_API_ADDR
+              value: ":7070"
+            - name: JOBQ_METRICS_ADDR
+              value: ":9102"
+            - name: JOBQ_TOKEN_FILE
+              value: /etc/jobq/api-token/token
+            - name: JOBQ_MAX_TIMEOUT
+              valueFrom:
+                configMapKeyRef:
+                  name: jobq-config
+                  key: MAX_TIMEOUT
+            - name: JOBQ_QUEUE_LIMIT
+              valueFrom:
+                configMapKeyRef:
+                  name: jobq-config
+                  key: QUEUE_LIMIT
+            - name: JOBQ_DRAIN_DELAY
+              valueFrom:
+                configMapKeyRef:
+                  name: jobq-config
+                  key: DRAIN_DELAY
+          volumeMounts:
+            - name: api-token
+              mountPath: /etc/jobq/api-token
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: api
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: api-token
+          secret:
+            secretName: jobq-api-token
+            defaultMode: 0440

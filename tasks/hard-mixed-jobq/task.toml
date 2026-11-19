@@ -1,0 +1,7 @@
+id = "hard-mixed-jobq"
+title = "Carry the v2 contract of the job queue through service, client and deployment"
+category = "feature"
+language = "mixed"
+quick = false
+timeout_s = 3600
+max_turns = 100

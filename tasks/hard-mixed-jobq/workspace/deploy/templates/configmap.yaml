@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jobq-config
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: jobq
+data:
+  PORT: "${PORT}"
+  MAX_TIMEOUT_SECONDS: "${MAX_TIMEOUT_SECONDS}"
+  QUEUE_LIMIT: "${QUEUE_LIMIT}"
