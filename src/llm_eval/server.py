@@ -26,7 +26,7 @@ from urllib.parse import urlsplit
 
 from .config import MANAGED_CONTAINER, PROXY, Args, ServerConfig
 from .podman import Mount
-from .sampler import read_gtt_used_mib
+from .sampler import read_gtt_total_mib, read_gtt_used_mib
 
 RELAY_DIR = "/run/llm-eval"
 PROXY_BASE_URL = "http://127.0.0.1:8080"
@@ -149,9 +149,10 @@ def _pump(source: socket.socket, dest: socket.socket) -> None:
 class ExternalServer:
     """A server that runs already. The harness does not start or stop it."""
 
-    def __init__(self, cfg: ServerConfig, scratch: Path):
+    def __init__(self, cfg: ServerConfig, scratch: Path, gtt_total: Callable[[], int] = read_gtt_total_mib):
         self.cfg = cfg
         self.scratch = scratch
+        self.gtt_total = gtt_total
         self.relay: UnixRelay | None = None
 
     def __enter__(self) -> "ExternalServer":
@@ -202,7 +203,8 @@ class ExternalServer:
 
     def describe(self) -> dict:
         """The server values for run.json."""
-        return {"mode": "external", "url": self.cfg.url, "container": self.cfg.container}
+        return {"mode": "external", "url": self.cfg.url, "container": self.cfg.container,
+                "gtt_total_mib": self.gtt_total()}
 
 
 class RemoteServer(ExternalServer):
@@ -307,8 +309,8 @@ class ManagedServer(ExternalServer):
 
     def __init__(self, cfg: ServerConfig, scratch: Path, podman, root: Path, out_dir: Path,
                  replace: bool = False, gtt_used: Callable[[], int] = read_gtt_used_mib,
-                 sleep: Callable[[float], None] = time.sleep):
-        super().__init__(cfg, scratch)
+                 gtt_total: Callable[[], int] = read_gtt_total_mib, sleep: Callable[[float], None] = time.sleep):
+        super().__init__(cfg, scratch, gtt_total)
         self.podman = podman
         self.root = root
         self.out_dir = out_dir
@@ -334,6 +336,7 @@ class ManagedServer(ExternalServer):
                 raise ServerError(f"podman run of {MANAGED_CONTAINER} failed: {out.strip()}")
             self._wait_until_healthy()
             load_seconds = round(time.monotonic() - began, 1)
+            after_load = self.gtt_used()
             self.info = {
                 "mode": "managed",
                 "url": self.cfg.url,
@@ -348,6 +351,8 @@ class ManagedServer(ExternalServer):
                 "chat_template": template,
                 "load_seconds": load_seconds,
                 "gtt_used_before_start_mib": gtt,
+                "gtt_used_after_load_mib": after_load,
+                "gtt_total_mib": self.gtt_total(),
             }
             super().__enter__()
         except BaseException:
@@ -456,10 +461,11 @@ class ManagedServer(ExternalServer):
 
 
 def open_server(cfg: ServerConfig, scratch: Path, podman=None, root: Path | None = None,
-                out_dir: Path | None = None, replace: bool = False, **managed_kw) -> ExternalServer:
-    """Return the server of the configuration. Use it as a context manager."""
+                out_dir: Path | None = None, replace: bool = False, **host) -> ExternalServer:
+    """Return the server of the configuration. Use it as a context manager. `host`
+    replaces the functions that read GTT (and sleep for a managed server) in tests."""
     if cfg.managed:
-        return ManagedServer(cfg, scratch, podman, root, out_dir, replace, **managed_kw)
+        return ManagedServer(cfg, scratch, podman, root, out_dir, replace, **host)
     if cfg.mode == "remote":
         return RemoteServer(cfg, scratch)
-    return ExternalServer(cfg, scratch)
+    return ExternalServer(cfg, scratch, **host)

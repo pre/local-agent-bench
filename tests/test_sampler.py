@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_eval.sampler import MemorySampler, read_gtt_used_mib
+from llm_eval.sampler import MemorySampler, read_gtt_total_mib, read_gtt_used_mib
 
 MEMINFO = """MemTotal:       131072000 kB
 MemFree:         1000000 kB
@@ -48,6 +48,13 @@ def test_read_gtt_used_sums_the_cards(host):
 
 def test_read_gtt_used_without_cards(tmp_path):
     assert read_gtt_used_mib(str(tmp_path / "card*/x")) == 0
+
+
+def test_read_gtt_total_sums_the_cards(host):
+    for card, mib in (("card0", 112640), ("card1", 512)):
+        (host.root / card / "device" / "mem_info_gtt_total").write_text(f"{mib * 1048576}\n")
+
+    assert read_gtt_total_mib(str(host.root / "card*/device/mem_info_gtt_total")) == 113152
 
 
 def test_sampler_writes_csv_and_returns_extremes(host, tmp_path):

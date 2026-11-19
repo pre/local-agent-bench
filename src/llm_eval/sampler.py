@@ -10,12 +10,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 GTT_PATTERN = "/sys/class/drm/card*/device/mem_info_gtt_used"
+GTT_TOTAL_PATTERN = "/sys/class/drm/card*/device/mem_info_gtt_total"
 COLUMNS = ["time", "gtt_used_mib", "mem_available_mib", "swap_free_mib", "psi_some_avg10", "psi_full_avg10"]
+
+
+def _sum_mib(pattern: str) -> int:
+    return sum(int(Path(p).read_text()) for p in glob.glob(pattern)) >> 20
 
 
 def read_gtt_used_mib(pattern: str = GTT_PATTERN) -> int:
     """GTT used of all GPUs. 0 when there is no GPU."""
-    return sum(int(Path(p).read_text()) for p in glob.glob(pattern)) >> 20
+    return _sum_mib(pattern)
+
+
+def read_gtt_total_mib(pattern: str = GTT_TOTAL_PATTERN) -> int:
+    """GTT total of all GPUs: the limit of the kernel. 0 when there is no GPU."""
+    return _sum_mib(pattern)
 
 
 def read_meminfo_mib(path: Path, *keys: str) -> list[int]:

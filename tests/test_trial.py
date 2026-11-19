@@ -48,7 +48,7 @@ def agent_that(events, fix=True, code=0):
 def run(root: Path, podman, reps=1, observers=(), resume=False, config="c.toml"):
     cfg = load_config(root / config)
     out = root / "out"
-    with open_server(cfg.server, root / "scratch") as server:
+    with open_server(cfg.server, root / "scratch", gtt_total=lambda: 112640) as server:
         ctx = RunContext("run1", out, cfg, root, podman, server, list(observers))
         results = execute_run(ctx, [load_task(root / "tasks" / "t1")], reps, resume=resume)
     return results, out
@@ -177,7 +177,7 @@ def test_run_json_has_the_server_values(root):
     _, out = run(root, podman)
 
     server = json.loads((out / "run.json").read_text())["server"]
-    assert server == {"mode": "external", "url": "http://127.0.0.1:8080", "container": None}
+    assert server == {"mode": "external", "url": "http://127.0.0.1:8080", "container": None, "gtt_total_mib": 112640}
 
 
 def test_exception_in_a_trial_becomes_a_harness_error(root):
@@ -329,3 +329,4 @@ def test_result_has_cost_and_the_models_of_the_responses(remote_root):
     run_json = json.loads((out / "run.json").read_text())
     assert run_json["reported_models"] == ["claude-test-1"]
     assert run_json["server"]["mode"] == "remote"
+    assert "gtt_total_mib" not in run_json["server"]

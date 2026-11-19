@@ -73,10 +73,11 @@ def write_config(repo: Path, url: str | None = None, timeout: int = 5, **replace
     return path
 
 
-def managed(repo, podman, gtt_mib=500, replace=False, **kw) -> ManagedServer:
+def managed(repo, podman, gtt_mib=500, replace=False, gtt_used=None, gtt_total_mib=100000, **kw) -> ManagedServer:
     cfg = load_config(write_config(repo, **kw))
     return open_server(cfg.server, repo / "scratch", podman=podman, root=repo, out_dir=repo / "run",
-                       replace=replace, gtt_used=lambda: gtt_mib, sleep=lambda s: None)
+                       replace=replace, gtt_used=gtt_used or (lambda: gtt_mib), gtt_total=lambda: gtt_total_mib,
+                       sleep=lambda s: None)
 
 
 def test_llama_server_args(repo):
@@ -95,7 +96,9 @@ def test_life_cycle(repo, http_server):
     podman = FakePodman()
     podman.server_log = "server log k1\n"
 
-    with managed(repo, podman, url=http_server) as server:
+    readings = iter([500, 800])  # before the start, after the load
+
+    with managed(repo, podman, url=http_server, gtt_used=lambda: next(readings)) as server:
         assert podman.containers[NAME]["labels"] == {"llm-eval.role": "server"}
         assert server.agent_access().network == "none"
         info = server.describe()
@@ -127,6 +130,8 @@ def test_life_cycle(repo, http_server):
     assert info["chat_template"] == {"path": "templates/t.jinja", "sha256": template_sha}
     assert info["load_seconds"] >= 0
     assert info["gtt_used_before_start_mib"] == 500
+    assert info["gtt_used_after_load_mib"] == 800
+    assert info["gtt_total_mib"] == 100000
     json.dumps(info)
 
 
