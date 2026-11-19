@@ -1,0 +1,8 @@
+[package]
+name = "placer"
+version = "0.1.0"
+edition = "2021"
+description = "Selects a node for a batch job"
+publish = false
+
+[dependencies]

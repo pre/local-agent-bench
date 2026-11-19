@@ -1,0 +1,7 @@
+# Batch partition of the build cluster.
+gpu-a01 state=ready    cpu=96  memory=1536Gi used_cpu=40 used_memory=600Gi
+gpu-a02 state=ready    cpu=96  memory=1536Gi used_cpu=88 used_memory=1400Gi
+gpu-a03 state=cordoned cpu=96  memory=1536Gi
+cpu-b01 state=ready    cpu=128 memory=512Gi  used_cpu=16 used_memory=64Gi
+cpu-b02 state=ready    cpu=128 memory=512Gi  used_cpu=120 used_memory=500Gi
+cpu-b03 state=down     cpu=128 memory=512Gi

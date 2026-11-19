@@ -1,0 +1,7 @@
+id = "rust-feature"
+title = "Implement quantity parsing and node placement"
+category = "feature"
+language = "rust"
+quick = false
+timeout_s = 1800
+max_turns = 60
