@@ -1,0 +1,6 @@
+{
+  "selector": "pool=gpu",
+  "exclude": "role=control",
+  "maxBatchSize": 4,
+  "maxUnavailablePerRack": 1
+}

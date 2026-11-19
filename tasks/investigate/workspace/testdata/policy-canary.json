@@ -1,0 +1,10 @@
+{
+  "selector": "pool=gpu",
+  "exclude": "role=control",
+  "canary": {
+    "selector": "canary=true",
+    "count": 2
+  },
+  "maxBatchSize": 4,
+  "maxUnavailablePerRack": 1
+}

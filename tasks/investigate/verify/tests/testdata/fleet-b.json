@@ -1,0 +1,137 @@
+{
+  "cluster": "build-b",
+  "nodes": [
+    {
+      "name": "ctl-b01",
+      "rack": "r1",
+      "labels": {
+        "role": "control"
+      }
+    },
+    {
+      "name": "ctl-b02",
+      "rack": "r2",
+      "labels": {
+        "role": "control"
+      }
+    },
+    {
+      "name": "ctl-b03",
+      "rack": "r3",
+      "labels": {
+        "role": "control"
+      }
+    },
+    {
+      "name": "gpu-b01",
+      "rack": "r1",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "gpu-b02",
+      "rack": "r1",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "gpu-b03",
+      "rack": "r1",
+      "labels": {
+        "pool": "gpu",
+        "canary": "true"
+      }
+    },
+    {
+      "name": "gpu-b04",
+      "rack": "r1",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "gpu-b05",
+      "rack": "r2",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "gpu-b06",
+      "rack": "r2",
+      "labels": {
+        "pool": "gpu"
+      },
+      "health": "failed"
+    },
+    {
+      "name": "gpu-b07",
+      "rack": "r2",
+      "labels": {
+        "pool": "gpu",
+        "canary": "true"
+      }
+    },
+    {
+      "name": "gpu-b08",
+      "rack": "r2",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "gpu-b09",
+      "rack": "r3",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "gpu-b10",
+      "rack": "r3",
+      "labels": {
+        "pool": "gpu",
+        "canary": "true"
+      }
+    },
+    {
+      "name": "gpu-b11",
+      "rack": "r3",
+      "labels": {
+        "pool": "gpu"
+      },
+      "health": "degraded"
+    },
+    {
+      "name": "gpu-b12",
+      "rack": "r4",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "gpu-b13",
+      "rack": "r4",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "cpu-b01",
+      "rack": "r4",
+      "labels": {
+        "pool": "cpu",
+        "canary": "true"
+      }
+    },
+    {
+      "name": "cpu-b02",
+      "rack": "r4",
+      "labels": {
+        "pool": "cpu"
+      }
+    }
+  ]
+}

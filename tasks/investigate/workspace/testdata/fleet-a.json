@@ -1,0 +1,63 @@
+{
+  "cluster": "build-a",
+  "nodes": [
+    {
+      "name": "ctl-a01",
+      "rack": "r1",
+      "labels": {
+        "role": "control"
+      }
+    },
+    {
+      "name": "gpu-a01",
+      "rack": "r1",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "gpu-a02",
+      "rack": "r1",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "gpu-a03",
+      "rack": "r2",
+      "labels": {
+        "pool": "gpu"
+      }
+    },
+    {
+      "name": "gpu-a04",
+      "rack": "r2",
+      "labels": {
+        "pool": "gpu"
+      },
+      "health": "degraded"
+    },
+    {
+      "name": "gpu-a05",
+      "rack": "r2",
+      "labels": {
+        "pool": "gpu"
+      },
+      "health": "failed"
+    },
+    {
+      "name": "cpu-a01",
+      "rack": "r3",
+      "labels": {
+        "pool": "cpu"
+      }
+    },
+    {
+      "name": "cpu-a02",
+      "rack": "r3",
+      "labels": {
+        "pool": "cpu"
+      }
+    }
+  ]
+}

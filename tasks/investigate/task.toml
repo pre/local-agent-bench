@@ -1,0 +1,7 @@
+id = "investigate"
+title = "Find why the rollout plan has a node twice"
+category = "investigate"
+language = "go"
+quick = false
+timeout_s = 1800
+max_turns = 60
