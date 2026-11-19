@@ -1,0 +1,7 @@
+id = "rust-bugfix"
+title = "Correct the comment handling of the config parser"
+category = "bugfix"
+language = "rust"
+quick = true
+timeout_s = 1800
+max_turns = 60
