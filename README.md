@@ -77,6 +77,7 @@ chat_template = "templates/qwen38-flash-next.jinja"  # optional, a file below te
 api_key_file = "~/.config/llama-server/api-key"
 port = 8090                                  # host port, on 127.0.0.1 only
 gtt_max_used_mib = 12288                     # optional, see "Server control"
+gtt_min_margin_mib = 4096                    # optional, see "Server control"
 start_timeout_s = 900                        # optional, the time limit for /health
 health_path = "/health"                      # optional
 agent_network = "proxy"                      # optional, see "Network"
@@ -265,11 +266,18 @@ A managed run does these steps:
 2. If a container `llm-eval-server` exists: if it has the label `llm-eval.role=server`, it remains from an earlier run of the harness. The harness stops with a message, and `--replace` removes the old container. The harness never stops or removes a container without this label.
 3. Read GTT used (`/sys/class/drm/card*/device/mem_info_gtt_used`). If it is more than `gtt_max_used_mib`, the harness stops with a message that lists the running containers. The harness does not stop other containers. A full GTT can stop the desktop.
 4. Start `llm-eval-server`: `podman run -d --label llm-eval.role=server --runtime crun --device /dev/kfd --device /dev/dri/renderD128 --group-add keep-groups --security-opt seccomp=unconfined -p 127.0.0.1:<port>:8080`, the models directory read-only at `/models`, the API key file at `/run/api-key`, the chat template at `/run/chat-template.jinja`.
-5. Wait until `/health` gives HTTP 200 (limit `start_timeout_s`). If the container stops, the harness shows the end of its log.
+5. Wait until `/health` gives HTTP 200 (limit `start_timeout_s`). If the container stops, the harness shows the end of its log. At each poll the harness reads GTT used. If GTT total (`mem_info_gtt_total`) minus GTT used is less than `gtt_min_margin_mib` (default 4096), the harness stops and removes the container and stops the run of this configuration with a message that gives the two values. Thus a model that is too large fails its start and does not stop the desktop.
 6. Run the trials. Before each trial the harness checks `/health`. If the server is down, the run of this configuration stops (continue it later with `--resume`).
 7. Stop the container (`podman stop -t 60`), save its full log as `server.log` in the run directory, remove the container. The harness also does this step when a trial raises an error or when you push Ctrl-C.
 
-`run.json` gets `server` with the values that make the result reproducible: `llama_server_args` (the full argument list), `podman_args`, `image` and `image_digest`, `llama_server_version` (the build line of `llama-server --version`, because the log does not show it at the default verbosity), `model_files` and `draft_model_files` (name and size of each part), `chat_template` (path and SHA-256), `load_seconds` (from the start of the container to the first healthy `/health`) and `gtt_used_before_start_mib`. For an external server, `server` has the mode, the URL and the container.
+`run.json` gets `server` with the values that make the result reproducible: `llama_server_args` (the full argument list), `podman_args`, `image` and `image_digest`, `llama_server_version` (the build line of `llama-server --version`, because the log does not show it at the default verbosity), `model_files` and `draft_model_files` (name and size of each part), `chat_template` (path and SHA-256) and `load_seconds` (from the start of the container to the first healthy `/health`). It also gets the GTT values of the start, in MiB:
+
+- `gtt_used_before_start_mib`: GTT used before the start, that is, the GTT of the other programs.
+- `gtt_used_after_load_mib`: GTT used after the first healthy `/health`.
+- `gtt_used_load_peak_mib`: the highest GTT used during the wait for `/health`.
+- `gtt_total_mib`: GTT total, the limit of the kernel.
+
+For an external server, `server` has the mode, the URL, the container and `gtt_total_mib`. The harness does not see the start of an external server, thus it has no other GTT values. A remote endpoint has no GTT values.
 
 ## Observers
 
@@ -337,6 +345,11 @@ The default run directory is `~/daybook-evidence/local-llm/eval/<run-id>/`, wher
   run.json                 configuration values, server values, image, Claude Code version, tasks
   run.log                  one progress line for each trial
   server.log               the full log of a managed server
+  probes/                  only with run --probe (see "Probes in a run")
+    protocol.json          the protocol probe
+    speed.json             the speed probe
+    memory.csv             the memory sampler during the probes
+    memory.json            the memory summary of the probes, the keys of "memory" in result.json
   <task-id>-r<rep>/
     result.json            the result of the trial
     transcript.jsonl       the stream-json output of Claude Code
@@ -424,6 +437,7 @@ uv run llm-eval report <run-dir>... --out report.md
 |---|---|
 | Runs | Each run directory: trials found and expected, start and end time. A run that is not finished, or that has fewer results than tasks times repetitions, is marked PARTIAL |
 | Configurations | One row for each configuration: trials counted, pass rate with a 95 % Wilson interval, mean score, median and total wall time, prompt and decode tokens per second, draft acceptance, GTT peak, lowest MemAvailable, lowest SwapFree, count of each failure reason, count of harness errors |
+| Memory | One row for each configuration: GTT limit, GTT before start, GTT after load, GTT peak, Model GTT, GTT margin, lowest MemAvailable, lowest SwapFree, highest PSI full avg10 |
 | Tasks | Task against configuration: passes of the counted repetitions (for example `2/3`). The mean score is shown when a trial has a partial score |
 | Failed trials | For each configuration: run, task, repetition, failure reason, score, failed check names, turns, wall time |
 | Limits | The count of trials and the width of the interval for each configuration |
@@ -434,7 +448,13 @@ Rules:
 - A configuration is a name and the SHA-256 of its values. The same name with a different SHA-256 is a different row, and the row label has the first 8 characters of the SHA-256.
 - A trial with `harness_error` is not a model failure. It is not in the pass rate, the mean score and the median wall time. The total wall time includes it.
 - Rows are sorted by pass rate, then by median wall time.
-- Speed values come from the `server` dictionary of `result.json`: the sum of the tokens divided by the sum of the seconds of all trials, not a mean of rates. Draft acceptance is the sum of accepted tokens divided by the sum of generated draft tokens. Memory values come from the `memory` dictionary: the peak of the peaks and the minimum of the minimums. A value is `n/a` when no trial has it.
+- Speed values come from the `server` dictionary of `result.json`: the sum of the tokens divided by the sum of the seconds of all trials, not a mean of rates. Draft acceptance is the sum of accepted tokens divided by the sum of generated draft tokens.
+- Memory values come from the `memory` dictionary of the trials and from `probes/memory.json`: the peak of the peaks and the minimum of the minimums. GTT peak also includes `gtt_used_load_peak_mib` of `run.json`. A value is `n/a` when no trial has it.
+- All memory values are measured on the machine of the run. The report reads only the run files, not `/sys`, thus it can run later or on a different machine.
+- In "Memory", GTT limit is `gtt_total_mib`, GTT before start is `gtt_used_before_start_mib` and GTT after load is `gtt_used_after_load_mib` of `run.json`. Model GTT is GTT peak minus GTT before start: the GTT of the server with its model and context. GTT margin is GTT limit minus GTT peak.
+- A run without `gtt_used_after_load_mib` (an older run) gives GTT after load from `gtt_used_start_mib` of its first trial. A run without `gtt_total_mib` gives `n/a` for GTT limit and GTT margin. An external server gives `n/a` for GTT before start and Model GTT.
+- A remote configuration gives `n/a` for all GTT values in "Configurations" and "Memory", because it does not use the local GPU memory. Another local server can run at the same time, and its GTT is not part of the result.
+- When a row has more than one run, GTT limit and GTT peak are the maximum and GTT margin is the minimum of the runs. GTT before start and GTT after load come from the run with the highest GTT peak.
 
 ## Compare
 
@@ -462,6 +482,8 @@ just probe configs/qwen38-external.toml --kind speed --target 1000 --target 2300
 ### Probes in a run
 
 `run --probe speed|protocol|all` sends the probes to the server of each run after the server is healthy and before the first trial. The files go to `<run-dir>/probes/`, so `report <run-dir>` shows them. The speed probe of a run uses the targets 1000 and 23000 tokens. `--probe-target N` (can repeat) gives other targets.
+
+The memory sampler runs during the probes and writes `probes/memory.csv` and `probes/memory.json`. A long prompt fills the context, thus a probe can use more GTT than the trials. The GTT peak of the report includes the probes.
 
 With `protocol` or `all`, the protocol probe runs first, and it is a gate. When the case `plain`, `tool_call` or `tool_round_trip` fails, the harness does not run the speed probe and the trials of that configuration. It prints the failed cases, writes the reason to `run.json` (key `probe_gate`: `failed_cases`, `reason`, `at`) and to `run.log`, stops the server and continues with the next configuration. The exit code is then 1. The report shows the reason in "Runs". The other cases do not stop a run.
 
