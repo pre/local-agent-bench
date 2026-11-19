@@ -1,0 +1,7 @@
+id = "hard-rust-jobq"
+title = "Find the defects of the job scheduler"
+category = "bugfix"
+language = "rust"
+quick = false
+timeout_s = 7200
+max_turns = 100

@@ -1,0 +1,3 @@
+`jobq` schedules the jobs of our build farm. Since the last release, the operators see wrong behavior: jobs that run in the wrong order or at the wrong time, jobs that never run, and submits that the scheduler rejects. We recorded the client calls of one incident in `traces/incident.trace`. You can run it with `cargo run --release -- replay traces/incident.trace`. We do not have a log of the correct behavior.
+
+`docs/SCHEDULER.md` and `docs/TRACE.md` describe the correct behavior. Find and fix all the defects in the crate that make it differ from these documents. There is more than one. The existing tests pass, so they do not show the defects. Keep the public API, the trace format and the log format as they are. When you are done, `cargo test` must pass.

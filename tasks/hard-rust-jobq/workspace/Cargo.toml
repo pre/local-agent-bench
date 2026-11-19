@@ -1,0 +1,8 @@
+[package]
+name = "jobq"
+version = "0.3.0"
+edition = "2021"
+description = "A job scheduler with retries, and a replay tool for traces"
+publish = false
+
+[dependencies]
