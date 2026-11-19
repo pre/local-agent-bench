@@ -196,12 +196,12 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
     return True
 
 
-def probe_run(ctx: RunContext, plan: RunPlan, kind: str, targets: list[int] | None) -> bool:
+def probe_run(ctx: RunContext, plan: RunPlan, choice: str, targets: list[int] | None) -> bool:
     """Probe the server of the run into <run-dir>/probes/. The protocol probe runs
     first. When a case of probe.GATE_CASES fails, the speed probe and the trials
     do not run, and the result is False."""
     server = ctx.config.server
-    for kind in ("protocol", "speed") if kind == "all" else (kind,):
+    for kind in ("protocol", "speed") if choice == "all" else (choice,):
         paths = probe.probe_server(
             server.url, ctx.server.api_key(), server.model, ctx.out_dir / "probes", (kind,),
             context_tokens=server.context_tokens, targets=targets or probe.RUN_TARGETS,
