@@ -179,6 +179,8 @@ When a `.part` file is complete, the script checks it with SHA-256 at low CPU an
 
 `just verify-model <model>...` (`download.sh --verify <model>...` with `TSV` and `MODELS` set to the paths on the host) checks the files with their final names against `download/models.tsv`. It downloads nothing. The exit code is 1 when a file is missing (also a file that is only a `.part` file) or when its SHA-256 does not match. Use it before a run with a model that a download changed.
 
+`just download-model` stops with a message when the container `model-download` runs, so a second command cannot stop a running download. A stopped container of that name is replaced.
+
 ## Cloud reference models
 
 Two configurations run the same tasks with Claude models through the company LLM gateway. They show the distance between a local model and a cloud model. Each trial costs gateway tokens.

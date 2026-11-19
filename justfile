@@ -71,6 +71,10 @@ download-model +names:
       mkdir -p "{{models_root}}/$name"
       mounts+=(-v "{{models_root}}/$name:/models/$name")
     done
+    if [ "$(podman container inspect --format '{{{{.State.Running}}' model-download 2>/dev/null)" = true ]; then
+      echo "The container model-download runs. Wait until it stops (podman logs -f model-download)."
+      exit 1
+    fi
     podman run -d --replace --name model-download -e RATE="${RATE:-28M}" \
       -e SSL_CERT_FILE=/run/host-ca.crt \
       -v {{ca_file}}:/run/host-ca.crt:ro -v {{ca_file}}:/etc/ssl/certs/ca-certificates.crt:ro \
