@@ -1,0 +1,21 @@
+# The llama-server that runs now: container llama-qwen38 from ~/dev/local-llm/llama-server
+# (UD-Q4_K_XL, MTP head, context 131072, one slot). The harness does not start or stop it.
+name = "qwen38-external"
+
+[server]
+mode = "external"
+url = "http://127.0.0.1:8080"
+api_key_file = "~/.config/llama-server/api-key"
+model = "qwen3.8-flash-next"   # the --alias of llama-server
+context_tokens = 131072        # the -c value of llama-server
+agent_network = "proxy"
+
+[client]
+image = "localhost/llm-eval-agent:latest"
+config_dir = "client-config"
+
+[client.env]
+# Keep the start of the system prompt stable, so llama-server can use its prompt cache again.
+CLAUDE_CODE_ATTRIBUTION_HEADER = "0"
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"
