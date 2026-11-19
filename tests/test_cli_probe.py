@@ -6,7 +6,7 @@ import pytest
 
 from fake_llama import KEY, FakeLlama
 from llm_eval import cli, probe
-from test_cli import fake, run  # noqa: F401  (fixture)
+from test_cli import FakeSampler, fake, run  # noqa: F401  (fixture)
 from test_trial import root  # noqa: F401  (fixture)
 
 
@@ -51,6 +51,23 @@ def test_probe_all_runs_protocol_first_then_speed(root, fake, llama):
     assert KEY not in (out / "probes" / "speed.json").read_text()
 
 
+def test_probe_memory_goes_to_the_probe_directory(root, fake, llama, monkeypatch):
+    class Sampler(FakeSampler):
+        def start(self, trial_dir):
+            (trial_dir / "memory.csv").write_text("time,gtt_used_mib\n")
+
+        def stop(self):
+            return {"gtt_used_peak_mib": 90000, "samples": 3}
+
+    monkeypatch.setattr(cli, "MemorySampler", Sampler)
+    out = root / "o"
+
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out), "--probe", "protocol") == 0
+
+    assert json.loads((out / "probes" / "memory.json").read_text()) == {"gtt_used_peak_mib": 90000, "samples": 3}
+    assert (out / "probes" / "memory.csv").exists()
+
+
 def test_speed_targets_of_a_run_are_1000_and_23000(root, fake, monkeypatch):
     seen = []
 
@@ -73,6 +90,7 @@ def test_gate_stops_the_trials_when_a_basic_case_fails(root, fake, llama, probe_
 
     assert fake.of_kind("agent") == []
     assert not (out / "probes" / "speed.json").exists()
+    assert json.loads((out / "probes" / "memory.json").read_text()) == {"samples": 1}
     info = json.loads((out / "run.json").read_text())
     assert info["probe_gate"]["failed_cases"] == ["plain", "tool_call", "tool_round_trip"]
     assert info["tasks"] == ["t1"] and info["config"]["name"] == "local-test"

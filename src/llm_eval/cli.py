@@ -199,19 +199,27 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
 def probe_run(ctx: RunContext, plan: RunPlan, choice: str, targets: list[int] | None) -> bool:
     """Probe the server of the run into <run-dir>/probes/. The protocol probe runs
     first. When a case of probe.GATE_CASES fails, the speed probe and the trials
-    do not run, and the result is False."""
+    do not run, and the result is False. The memory sampler runs during the
+    probes and writes probes/memory.csv and probes/memory.json."""
     server = ctx.config.server
-    for kind in ("protocol", "speed") if choice == "all" else (choice,):
-        paths = probe.probe_server(
-            server.url, ctx.server.api_key(), server.model, ctx.out_dir / "probes", (kind,),
-            context_tokens=server.context_tokens, targets=targets or probe.RUN_TARGETS,
-            config={"name": ctx.config.name, "sha256": ctx.config.sha256})
-        if kind == "protocol":
-            failed = probe.gate_failures(json.loads(paths["protocol"].read_text()))
-            if failed:
-                stop_before_trials(ctx, plan, failed)
-                return False
-    return True
+    probes = ctx.out_dir / "probes"
+    probes.mkdir(parents=True, exist_ok=True)
+    sampler = MemorySampler()
+    sampler.start(probes)
+    try:
+        for kind in ("protocol", "speed") if choice == "all" else (choice,):
+            paths = probe.probe_server(
+                server.url, ctx.server.api_key(), server.model, probes, (kind,),
+                context_tokens=server.context_tokens, targets=targets or probe.RUN_TARGETS,
+                config={"name": ctx.config.name, "sha256": ctx.config.sha256})
+            if kind == "protocol":
+                failed = probe.gate_failures(json.loads(paths["protocol"].read_text()))
+                if failed:
+                    stop_before_trials(ctx, plan, failed)
+                    return False
+        return True
+    finally:
+        write_json(probes / "memory.json", sampler.stop())
 
 
 def stop_before_trials(ctx: RunContext, plan: RunPlan, failed: list[dict]) -> None:
