@@ -1,0 +1,7 @@
+id = "long-context"
+title = "Make the address plan code agree with a long network standard"
+category = "long-context"
+language = "python"
+quick = false
+timeout_s = 1800
+max_turns = 60
