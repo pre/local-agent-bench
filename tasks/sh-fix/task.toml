@@ -1,0 +1,7 @@
+id = "sh-fix"
+title = "Correct the log rotation script for spaces and pipe errors"
+category = "bugfix"
+language = "shell"
+quick = false
+timeout_s = 1800
+max_turns = 60

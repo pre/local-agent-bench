@@ -1,0 +1,8 @@
+# /etc/cron.d/rotate-logs on the log hosts. Managed by the platform team.
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+KEEP=14
+
+15 2 * * * logsvc /opt/logtools/bin/rotate-logs.sh /srv/logs/billing /srv/archive/billing >> /var/log/rotate-logs.log 2>&1
+20 2 * * * logsvc /opt/logtools/bin/rotate-logs.sh "/srv/logs/payment gateway" "/srv/archive/payment gateway" >> /var/log/rotate-logs.log 2>&1
+25 2 * * * logsvc /opt/logtools/bin/rotate-logs.sh /srv/logs/inventory-api /srv/archive/inventory-api >> /var/log/rotate-logs.log 2>&1
