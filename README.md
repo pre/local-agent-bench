@@ -94,7 +94,7 @@ model_file = "MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf"  # below models_dir. "" mean
 args = { --spec-type = "draft-mtp", --spec-draft-n-max = 3 }
 ```
 
-A model file that has its MTP layer inside (for example Qwen3.8-27B of unsloth) needs no draft file. Then put the flags in `[server.args]`: `--spec-type = "draft-mtp"`, `--spec-draft-n-max = 2`. `[server.draft]` is only for a separate draft file: without `model_file` the harness ignores its `args`.
+A model file that has its MTP layer inside (for example, by report, Qwen3.8-27B of unsloth) needs no draft file. Then put the flags in `[server.args]`: `--spec-type = "draft-mtp"`, `--spec-draft-n-max = 2`. `[server.draft]` is only for a separate draft file: without `model_file` the harness ignores its `args`.
 
 The harness sets these flags itself, and they are not permitted in `args`: `--host 0.0.0.0 --port 8080 --api-key-file /run/api-key -m /models/<model_file> --alias <model> -c <context_tokens>`, `--chat-template-file /run/chat-template.jinja` (with `chat_template`) and `-md /models/<draft model_file>` (with a draft model). `args` is a table and not a list, so a variant file can change one flag.
 
@@ -158,7 +158,7 @@ Consequences:
 | `qwen38-base.toml` | Qwen3.8-Flash-Next, UD-Q4_K_XL, MTP head | 4 parts and a draft file | 88017 MiB GTT used with the desktop (measured) | Qwen Community License | Needs the patched chat template and `-lzm on` |
 | `gpt-oss-120b.toml` | gpt-oss-120b, F16 of unsloth (MXFP4 experts) | 1 file, 65.4 GB | about 68 GiB (estimate) | Apache 2.0 | The embedded template drops each system message after the first message, thus also the environment block of Claude Code |
 | `qwen3-coder-next.toml` | Qwen3-Coder-Next 80B-A3B, UD-Q8_K_XL | 3 parts, 86.3 GB | about 85 to 87 GiB (estimate) | Apache 2.0, card metadata only (the LICENSE link gives HTTP 404) | No thinking mode |
-| `qwen38-27b.toml` | Qwen3.8-27B dense, Q8_0, MTP layer inside | 1 file, 29.0 GB | about 37 GiB (estimate) | Apache 2.0 | Needs the patched chat template of Flash-Next. MTP with no draft file |
+| `qwen38-27b.toml` | Qwen3.8-27B dense, Q8_0, MTP layer inside (not verified) | 1 file, 29.0 GB | about 37 GiB (estimate) | Apache 2.0 | Needs the patched chat template of Flash-Next. MTP with no draft file. Check at the first start that the file has the MTP layer |
 | `glm-53-flash.toml` | GLM-5.3 Flash 320.8B-A18B, UD-IQ2_XXS, no MTP | 4 parts, 101.8 GB | about 93 to 95 GiB (estimate) | MIT | At the memory limit: starts only when GTT used is 6000 MiB or less. Published top-1 agreement 76 %. Reports of reasoning that collapses in long sessions |
 
 The four new configurations use `-lm none` (resident load, recommended on Strix Halo), port 8090, context 131072 and the image of `qwen38-base.toml`. The comments of each file give the source of each value. A unit test checks that each flag of each configuration is in the help text of llama-server build 12531 (`tests/llama-server-help-build12531.txt`).

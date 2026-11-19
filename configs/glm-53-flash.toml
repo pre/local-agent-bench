@@ -1,7 +1,8 @@
 # GLM-5.3 Flash (320.8B-A18B), UD-IQ2_XXS of unsloth (4 parts), revision a38483c8.
 # Download: just download-model glm-5.3-flash. License: MIT.
-# Part 4 (2.7 GB) holds only blk.45, the MTP layer. llama-server loads it only with MTP,
-# and this configuration has no MTP.
+# Not verified: that part 4 (2.7 GB) holds only blk.45, the MTP layer, which llama-server
+# loads only with MTP (this configuration has no MTP). The tensor list was not read.
+# Check it at the first start: the log shows the tensors and the size of the loaded weights.
 # Expected GTT: about 93 to 95 GiB (estimate: 92.3 GiB weights without the MTP layer,
 # KV q8_0 and compute buffers about 1 to 2.5 GiB). The GTT limit of this machine is
 # 110 GiB, and the desktop uses 2 to 5 GiB. So the server starts only when GTT used is

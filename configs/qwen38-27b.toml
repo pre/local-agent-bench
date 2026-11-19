@@ -1,5 +1,7 @@
-# Qwen3.8-27B (dense), Q8_0 of unsloth, revision 4af51b35. The file has the MTP layer
-# (blk.64.nextn tensors), so speculative decoding needs no draft file.
+# Qwen3.8-27B (dense), Q8_0 of unsloth, revision 4af51b35. Not verified: that the file
+# has the MTP layer (blk.64.nextn tensors), so that speculative decoding needs no draft
+# file. The source is Unsloth discussion #124 and the parameter count of the card. The
+# tensor list was not read. Check it at the first start (the log must show the MTP layer).
 # Download: just download-model qwen3.8-27b. License: Apache 2.0.
 # Expected GTT: about 37 GiB (estimate: 27.1 GiB weights, 8.0 GiB KV f16, MTP and compute buffers).
 #
