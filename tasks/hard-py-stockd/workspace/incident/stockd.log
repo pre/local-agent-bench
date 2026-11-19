@@ -1,0 +1,23 @@
+Nov 16 06:00:02 wms-01 stockd[2201]: INFO stockd.recovery: recovered: snapshot seq none, replayed 0 events, last seq 0
+Nov 16 07:57:19 wms-01 stockd[2201]: INFO stockd.store: segment 000000000001.seg closed at seq 29, new segment 000000000030.seg
+Nov 16 09:54:37 wms-01 stockd[2201]: INFO stockd.snapshot: snapshot snap-000000000029.json written
+Nov 16 11:51:54 wms-01 stockd[2201]: INFO stockd.store: segment 000000000030.seg closed at seq 59, new segment 000000000060.seg
+Nov 16 13:49:12 wms-01 stockd[2201]: INFO stockd.snapshot: snapshot snap-000000000059.json written
+Nov 16 15:46:29 wms-01 stockd[2201]: INFO stockd.store: segment 000000000060.seg closed at seq 88, new segment 000000000089.seg
+Nov 16 17:43:47 wms-01 stockd[2201]: INFO stockd.snapshot: snapshot snap-000000000088.json written
+Nov 16 19:41:04 wms-01 stockd[2201]: INFO stockd.store: segment 000000000089.seg closed at seq 114, new segment 000000000115.seg
+Nov 16 21:38:22 wms-01 stockd[2201]: INFO stockd.snapshot: snapshot snap-000000000114.json written
+Nov 17 01:30:00 wms-01 systemd[1]: Starting stockd-nightly.service - stockd snapshot and compaction...
+Nov 17 01:30:01 wms-01 stockd[2208]: WARNING stockd.projection: shipment of unknown reservation 12 ignored
+Nov 17 01:30:01 wms-01 stockd[2208]: INFO stockd.recovery: recovered: snapshot seq 114, replayed 2 events, last seq 116
+Nov 17 01:30:01 wms-01 stockd[2208]: INFO stockd.snapshot: snapshot snap-000000000116.json written
+Nov 17 01:30:02 wms-01 stockd[2221]: INFO stockd.recovery: recovered: snapshot seq 116, replayed 0 events, last seq 116
+Nov 17 01:30:02 wms-01 stockd[2221]: INFO stockd.maintenance: compact: removed 000000000001.seg (snapshot seq 116)
+Nov 17 01:30:02 wms-01 stockd[2221]: INFO stockd.maintenance: compact: removed 000000000030.seg (snapshot seq 116)
+Nov 17 01:30:02 wms-01 stockd[2221]: INFO stockd.maintenance: compact: removed 000000000060.seg (snapshot seq 116)
+Nov 17 01:30:02 wms-01 stockd[2221]: INFO stockd.maintenance: compact: removed 000000000089.seg (snapshot seq 116)
+Nov 17 01:30:02 wms-01 systemd[1]: stockd-nightly.service: Deactivated successfully.
+Nov 17 07:55:00 wms-01 systemd[1]: Started stockd.service - stock service.
+Nov 17 07:58:13 wms-01 stockd[2234]: INFO stockd.recovery: recovered: snapshot seq 116, replayed 0 events, last seq 116
+Nov 17 07:58:13 wms-01 stockd[2234]: INFO stockd.service: release: unknown reservation 31, ignored
+Nov 17 07:58:13 wms-01 stockd[2234]: INFO stockd: apply: 3 applied, 1 ignored

@@ -1,0 +1,7 @@
+id = "hard-py-stockd"
+title = "Find why the stock is wrong after a restart of the event-sourced service"
+category = "investigate"
+language = "python"
+quick = false
+timeout_s = 3600
+max_turns = 100

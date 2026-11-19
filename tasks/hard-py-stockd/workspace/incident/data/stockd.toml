@@ -1,0 +1,3 @@
+# production settings of wms-01
+segment_max_bytes = 4096
+snapshot_keep = 2

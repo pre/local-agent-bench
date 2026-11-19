@@ -1,0 +1,19 @@
+{
+  "skus": {
+    "BOLT-M8": {
+      "pack": 100
+    },
+    "NUT-M8": {
+      "pack": 100
+    },
+    "VALVE-22": {
+      "pack": 6
+    },
+    "PUMP-7": {
+      "pack": 1
+    },
+    "HOSE-3": {
+      "pack": 10
+    }
+  }
+}

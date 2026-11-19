@@ -1,0 +1,5 @@
+{"data":{"qty":24,"sku":"VALVE-22","transfer":1,"warehouse":"WH-2"},"rid":"trf-0412","seq":115,"ts":"2026-11-16T06:01:54Z","type":"TransferredIn","v":2}
+{"data":{"reservation":12},"rid":"shp-x","seq":116,"ts":"2026-11-16T06:01:55Z","type":"Shipped","v":2}
+{"data":{"order":"SO-5520","qty":40,"reservation":32,"sku":"BOLT-M8","warehouse":"WH-1"},"rid":"res-5520","seq":117,"ts":"2026-11-17T07:55:00Z","type":"Reserved","v":2}
+{"data":{"qty":400,"sku":"BOLT-M8","warehouse":"WH-1"},"rid":"rcv-881","seq":118,"ts":"2026-11-17T07:55:01Z","type":"Received","v":2}
+{"data":{"qty":20,"sku":"HOSE-3","warehouse":"WH-2"},"rid":"rcv-882","seq":119,"ts":"2026-11-17T07:55:02Z","type":"Received","v":2}
