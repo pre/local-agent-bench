@@ -1,0 +1,7 @@
+# Claude Opus 5.5 through the company LLM gateway. All values except the model
+# come from claude-sonnet-5.5-gateway.toml.
+base = "claude-sonnet-5.5-gateway.toml"
+name = "claude-opus-5.5-gateway"
+
+[server]
+model = "Claude-Opus-5-5"

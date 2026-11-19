@@ -71,3 +71,17 @@ def test_context_variant_changes_the_client_too():
 
 def test_external_names_its_container():
     assert load_config(CONFIGS / "qwen38-external.toml").server.container == "llama-qwen38"
+
+
+@pytest.mark.parametrize("name, model", [("claude-sonnet-5.5-gateway.toml", "Claude-Sonnet-5-5"),
+                                         ("claude-opus-5.5-gateway.toml", "Claude-Opus-5-5")])
+def test_gateway_configs_use_one_model_and_the_profile_secrets(name, model):
+    cfg = load_config(CONFIGS / name)
+
+    assert cfg.name == name.removesuffix(".toml")
+    assert cfg.server.mode == "remote"
+    assert cfg.server.agent_network == "proxy"
+    assert cfg.server.model == model
+    assert cfg.server.context_tokens is None
+    assert cfg.client.secrets.names == ("ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS")
+    assert "ANTHROPIC_AUTH_TOKEN" not in cfg.client.env

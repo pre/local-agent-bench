@@ -1,0 +1,23 @@
+# Claude Sonnet 5.5 through the company LLM gateway: a cloud reference model.
+# The agent container has no network. It reaches only the gateway host, through
+# the CONNECT proxy of the harness. The keys come from the Claude Code profile.
+name = "claude-sonnet-5.5-gateway"
+
+[server]
+mode = "remote"
+url = "https://llm-api.amd.com/Unified"
+model = "Claude-Sonnet-5-5"   # the ID in the model list of the gateway, without [1m]
+
+[client]
+image = "localhost/llm-eval-agent:latest"
+config_dir = "client-config"
+
+[client.env]
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+ENABLE_PROMPT_CACHING_1H = "1"
+API_FORCE_IDLE_TIMEOUT = "1"
+CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS = "90000"
+
+[client.secrets]
+from_profile = "~/.config/claude-code/profiles/llm-gw.sh"
+names = ["ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS"]
