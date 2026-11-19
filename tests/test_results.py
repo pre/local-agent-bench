@@ -50,6 +50,22 @@ def test_summarize_counts_tools_errors_and_reads_result(tmp_path):
     assert s.tokens == {"input": 100, "output": 20, "cache_read": 80, "cache_creation": 0}
 
 
+PERMISSION_DENIED = {  # the shape of Claude Code 2.1.328: "message" is a string, not an object
+    "type": "system", "subtype": "permission_denied", "tool_name": "Bash", "tool_use_id": "t1",
+    "decision_reason_type": "safetyCheck", "decision_reason": "Dangerous rm operation",
+    "message": "Dangerous rm operation detected: '/work/*'",
+}
+
+
+def test_summarize_counts_permission_denials_with_a_string_message(tmp_path):
+    events = [tool_use(), PERMISSION_DENIED, tool_result(is_error=True), PERMISSION_DENIED, RESULT_OK]
+
+    s = summarize_transcript(write_transcript(tmp_path, events))
+
+    assert s.permission_denials == 2
+    assert (s.tool_calls, s.tool_errors, s.turns) == (1, 1, 4)
+
+
 def test_summarize_missing_or_empty_transcript(tmp_path):
     s = summarize_transcript(tmp_path / "none.jsonl")
 

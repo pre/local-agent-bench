@@ -137,6 +137,7 @@ def run_trial(ctx: RunContext, task: Task, rep: int) -> dict:
         "tool_calls": summary.tool_calls,
         "tool_errors": summary.tool_errors,
         "api_errors": summary.api_errors,
+        "permission_denials": summary.permission_denials,
         "tokens": summary.tokens,
         "total_cost_usd": claude_result.get("total_cost_usd"),  # the estimate of Claude Code
         "models": list(summary.models),
@@ -182,7 +183,7 @@ def error_result(ctx: RunContext, task: Task, rep: int, error: Exception, starte
         "failure_reason": "harness_error",
         "failure_detail": f"{type(error).__name__}: {error}"[:500],
         **dict.fromkeys(["wall_time_s", "check_time_s", "turns", "tool_calls", "tool_errors", "api_errors",
-                         "tokens", "total_cost_usd", "models", "model_usage", "agent", "verify", "server",
+                         "permission_denials", "tokens", "total_cost_usd", "models", "model_usage", "agent", "verify", "server",
                          "memory", "baseline"]),
         "claude_code_version": ctx.claude_code_version,
         "image": ctx.image,

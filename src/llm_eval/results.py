@@ -24,6 +24,7 @@ class TranscriptSummary:
     api_errors: int
     error_texts: tuple[str, ...]
     models: tuple[str, ...] = ()  # the model IDs of the API responses
+    permission_denials: int = 0
 
     @property
     def tokens(self) -> dict | None:
@@ -55,16 +56,20 @@ def read_events(path: Path) -> list[dict]:
 
 def summarize_transcript(path: Path) -> TranscriptSummary:
     result, version = None, None
-    tool_calls = tool_errors = api_errors = assistant_messages = 0
+    tool_calls = tool_errors = api_errors = assistant_messages = permission_denials = 0
     error_texts, models = [], set()
     for event in read_events(path):
         kind = event.get("type")
-        message = event.get("message", {})
+        message = event.get("message")
+        if not isinstance(message, dict):  # absent, or the text of a permission_denied event
+            message = {}
         content = message.get("content", [])
         if kind == "system" and event.get("subtype") == "init":
             version = event.get("claude_code_version")
         elif kind == "system" and event.get("subtype") == "api_retry":
             api_errors += 1
+        elif kind == "system" and event.get("subtype") == "permission_denied":
+            permission_denials += 1
         elif kind == "assistant":
             assistant_messages += 1
             if message.get("model"):
@@ -79,7 +84,7 @@ def summarize_transcript(path: Path) -> TranscriptSummary:
             result = event
     turns = result.get("num_turns", assistant_messages) if result else assistant_messages
     return TranscriptSummary(result, version, turns, tool_calls, tool_errors, api_errors, tuple(error_texts),
-                             tuple(sorted(models)))
+                             tuple(sorted(models)), permission_denials)
 
 
 def classify(agent: RunResult, summary: TranscriptSummary, check: CheckResult | None) -> tuple[bool, str | None, str | None]:

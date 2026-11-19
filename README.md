@@ -371,7 +371,7 @@ The default run directory is `~/daybook-evidence/local-llm/eval/<run-id>/`, wher
     harness_error.txt      only for a harness error: the traceback
 ```
 
-`result.json` has: `passed`, `score`, `failure_reason`, `failure_detail`, `wall_time_s` (agent container), `turns`, `tool_calls`, `tool_errors`, `api_errors`, `tokens`, `total_cost_usd`, `model_usage` and `models` (see "Cloud reference models"), `agent` (exit code, result subtype, durations), `verify`, `server` and `memory` (see "Observers"), `claude_code_version`, `image` (ID and digest), `config` (name, path, SHA-256) and `baseline` (start commit).
+`result.json` has: `passed`, `score`, `failure_reason`, `failure_detail`, `wall_time_s` (agent container), `turns`, `tool_calls`, `tool_errors`, `api_errors`, `permission_denials` (the count of `permission_denied` events: Claude Code refused a command, for example a dangerous `rm`, also with `--dangerously-skip-permissions`), `tokens`, `total_cost_usd`, `model_usage` and `models` (see "Cloud reference models"), `agent` (exit code, result subtype, durations), `verify`, `server` and `memory` (see "Observers"), `claude_code_version`, `image` (ID and digest), `config` (name, path, SHA-256) and `baseline` (start commit).
 
 A trial passes only if Claude Code stops normally and the check passes. The failure reasons, in the order the harness examines them:
 
