@@ -463,7 +463,7 @@ just probe configs/qwen38-external.toml --kind speed --target 1000 --target 2300
 
 `run --probe speed|protocol|all` sends the probes to the server of each run after the server is healthy and before the first trial. The files go to `<run-dir>/probes/`, so `report <run-dir>` shows them. The speed probe of a run uses the targets 1000 and 23000 tokens. `--probe-target N` (can repeat) gives other targets.
 
-With `protocol` or `all`, the protocol probe runs first, and it is a gate. When the case `plain`, `tool_call` or `tool_round_trip` fails, the harness does not run the speed probe and the trials of that configuration. It prints the failed cases, writes the reason to `run.json` (key `probe_gate`: `failed_cases`, `reason`, `at`) and to `run.log`, stops the server and continues with the next configuration. The exit code is then 1. The other cases do not stop a run.
+With `protocol` or `all`, the protocol probe runs first, and it is a gate. When the case `plain`, `tool_call` or `tool_round_trip` fails, the harness does not run the speed probe and the trials of that configuration. It prints the failed cases, writes the reason to `run.json` (key `probe_gate`: `failed_cases`, `reason`, `at`) and to `run.log`, stops the server and continues with the next configuration. The exit code is then 1. The report shows the reason in "Runs". The other cases do not stop a run.
 
 ### Probe command
 
