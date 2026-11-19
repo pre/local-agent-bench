@@ -9,10 +9,13 @@ from llm_eval import cli, probe
 from test_cli import FakeSampler, fake, run  # noqa: F401  (fixture)
 from test_trial import root  # noqa: F401  (fixture)
 
+BASIC = ["plain", "system_in_middle", "tool_call", "tool_round_trip"]
+
 
 @pytest.fixture
 def llama(root):
     server = FakeLlama()
+    server.state.system_in_middle = "keep"
     key = root.parent / "probe-key"
     key.write_text(KEY + "\n")
     config = (root / "c.toml").read_text()
@@ -92,13 +95,35 @@ def test_gate_stops_the_trials_when_a_basic_case_fails(root, fake, llama, probe_
     assert not (out / "probes" / "speed.json").exists()
     assert json.loads((out / "probes" / "memory.json").read_text()) == {"samples": 1}
     info = json.loads((out / "run.json").read_text())
-    assert info["probe_gate"]["failed_cases"] == ["plain", "tool_call", "tool_round_trip"]
+    assert info["probe_gate"]["failed_cases"] == BASIC
     assert info["tasks"] == ["t1"] and info["config"]["name"] == "local-test"
     assert "plain" in (out / "run.log").read_text()
     err = capsys.readouterr().err
     assert "tool_round_trip" in err and "HTTP 500" in err
     assert cli.main(["report", str(out)]) == 0
     assert "STOPPED: the protocol probe failed the basic cases plain" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("template, code, failed", [("reject", 1, ["system_in_middle"]), ("drop", 0, None)])
+def test_gate_stops_only_when_a_system_message_in_the_middle_gives_an_http_error(root, fake, llama, template, code,
+                                                                                failed):
+    llama.state.system_in_middle = template
+    out = root / "o"
+
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out), "--probe", "protocol") == code
+
+    assert (out / "t1-r1" / "result.json").exists() == (code == 0)
+    assert json.loads((out / "run.json").read_text()).get("probe_gate", {}).get("failed_cases") == failed
+
+
+def test_gate_runs_a_failed_case_once_more(root, fake, llama):
+    llama.state.fail_next["/v1/messages"] = [(500, "busy")]
+    out = root / "o"
+
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out), "--probe", "protocol") == 0
+
+    plain = json.loads((out / "probes" / "protocol.json").read_text())["cases"][0]
+    assert plain["passed"] and plain["first_attempt"]["http_status"] == 500
 
 
 def test_gate_ignores_the_other_cases(root, fake, llama):
@@ -137,7 +162,7 @@ def test_gate_on_resume_keeps_run_json(root, fake, llama):
 
     info = json.loads((out / "run.json").read_text())
     assert info["reps"] == 2 and info["trials"] == 2
-    assert info["probe_gate"]["failed_cases"] == ["plain", "tool_call", "tool_round_trip"]
+    assert info["probe_gate"]["failed_cases"] == BASIC
 
 
 def test_probe_target_needs_probe(root, fake, capsys):

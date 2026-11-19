@@ -169,6 +169,8 @@ def test_protocol_probe_runs_each_case(fake, client):
     assert failed == ["system_in_middle", "thinking_disabled"]
     middle = cases["system_in_middle"]
     assert middle["http_status"] == 500
+    assert middle["first_attempt"]["http_status"] == 500
+    assert "first_attempt" not in cases["thinking_disabled"]
     assert "System message must be at the beginning" in middle["error"]
     assert "System message must be at the beginning" in middle["response"]
     assert cases["parallel_tools"]["note"].startswith("2 tool calls: get_weather, get_time")
@@ -176,6 +178,49 @@ def test_protocol_probe_runs_each_case(fake, client):
     assert cases["client_sampling"]["note"] == "/slots: temperature 0.2, top_p 0.5, top_k 7"
     assert cases["max_tokens"]["stop_reason"] == "max_tokens"
     assert data["passed"] == len(CASES) - 2
+
+
+def gate_names(data: dict) -> list[str]:
+    return [case["name"] for case in probe.gate_failures(data)]
+
+
+def test_gate_case_that_fails_once_runs_again_and_passes(fake, client):
+    fake.state.system_in_middle = "keep"
+    fake.state.fail_next["/v1/messages"] = [(503, "busy")]
+
+    data = protocol_probe(client, "m")
+
+    plain = data["cases"][0]
+    assert plain["passed"]
+    assert plain["first_attempt"]["http_status"] == 503 and not plain["first_attempt"]["passed"]
+    assert gate_names(data) == []
+
+
+def test_gate_case_that_fails_twice_stops_the_gate(fake, client):
+    fake.state.system_in_middle = "keep"
+    fake.state.fail_next["/v1/messages"] = [(503, "busy"), (503, "busy")]
+
+    data = protocol_probe(client, "m")
+
+    assert gate_names(data) == ["plain"]
+    assert data["cases"][0]["http_status"] == data["cases"][0]["first_attempt"]["http_status"] == 503
+
+
+def test_gate_stops_on_a_rejected_system_message_in_the_middle(fake, client):
+    data = protocol_probe(client, "m")
+
+    assert gate_names(data) == ["system_in_middle"]
+
+
+def test_gate_accepts_a_system_message_in_the_middle_that_is_dropped(fake, client):
+    fake.state.system_in_middle = "drop"
+
+    data = protocol_probe(client, "m")
+
+    middle = next(case for case in data["cases"] if case["name"] == "system_in_middle")
+    assert middle["http_status"] == 200 and not middle["passed"]
+    assert "first_attempt" not in middle
+    assert gate_names(data) == []
 
 
 def test_protocol_case_with_invalid_tool_input(fake, client, monkeypatch):

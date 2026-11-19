@@ -26,7 +26,11 @@ SCHEMA = 1
 DEFAULT_TARGETS = (1000, 23000, 60000, 120000)
 RUN_TARGETS = (1000, 23000)  # run --probe: a 120000 token request takes about 13 minutes
 # run --probe: when one of these cases fails, the trials of the configuration do not run.
-GATE_CASES = ("plain", "tool_call", "tool_round_trip")
+GATE_CASES = ("plain", "system_in_middle", "tool_call", "tool_round_trip")
+# These gate cases fail the gate only when the HTTP status is not 200. Claude Code sends a
+# system message after the first user message: a template that rejects it fails each
+# trial. A template that drops it (HTTP 200) is a matter of quality.
+STATUS_GATE_CASES = ("system_in_middle",)
 DECODE_TOKENS = 256
 CONTEXT_MARGIN = 1024
 CASE_MAX_TOKENS = 4096
@@ -516,18 +520,34 @@ def run_case(client: Client, model: str, case: Case) -> dict:
 
 
 def protocol_probe(client: Client, model: str, cases=CASES, log: Callable[[str], None] = lambda line: None) -> dict:
+    """Run each case once. A case that fails the gate runs one more time, because one
+    sample at temperature 1.0 can fail by chance. Its record is the second attempt,
+    with the first attempt in "first_attempt"."""
     records = []
     for case in cases:
         record = run_case(client, model, case)
+        if fails_gate(record):
+            log(_line(record) + ", one more attempt")
+            record = {**run_case(client, model, case), "first_attempt": record}
         records.append(record)
-        log(f"protocol {case.name}: {'pass' if record['passed'] else 'FAIL'} (HTTP {record['http_status']})"
-            f" {record['error'] or record['note']}"[:300])
+        log(_line(record))
     return {"cases": records, "passed": sum(r["passed"] for r in records), "total": len(records)}
 
 
+def _line(record: dict) -> str:
+    return (f"protocol {record['name']}: {'pass' if record['passed'] else 'FAIL'} (HTTP {record['http_status']})"
+            f" {record['error'] or record['note']}")[:300]
+
+
+def fails_gate(record: dict) -> bool:
+    if record["name"] in STATUS_GATE_CASES:
+        return record["http_status"] != 200
+    return record["name"] in GATE_CASES and not record["passed"]
+
+
 def gate_failures(protocol: dict) -> list[dict]:
-    """The cases of GATE_CASES that failed in a protocol probe result."""
-    return [case for case in protocol["cases"] if case["name"] in GATE_CASES and not case["passed"]]
+    """The cases of a protocol probe result that fail the gate."""
+    return [case for case in protocol["cases"] if fails_gate(case)]
 
 
 def probe_server(base_url: str, api_key: str, model: str, out_dir: Path, kinds=("speed", "protocol"),

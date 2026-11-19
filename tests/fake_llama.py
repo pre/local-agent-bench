@@ -1,9 +1,11 @@
 """A fake llama-server on the loopback interface for the probe tests.
 
 /tokenize gives one token for each character (the code point), so /detokenize
-can reverse it. /v1/messages echoes the text of the request, calls the first
-tool when the request has tools, and gives HTTP 500 for a system message in
-the middle of the conversation (the old chat template did that).
+can reverse it. /v1/messages echoes the text of the request and calls the first
+tool when the request has tools. For a system message in the middle of the
+conversation it gives HTTP 500 (the old chat template did that), or with
+State.system_in_middle "drop" it drops the message (the gpt-oss template), or
+with "keep" it keeps it.
 """
 
 import http.server
@@ -86,6 +88,8 @@ class State:
         self.busy_polls = 0  # /slots reports a busy slot this many times
         self.slot_params: dict = {"temperature": 1.0, "top_p": 0.95, "top_k": 20}
         self.fail: dict[str, tuple[int, str]] = {}  # path -> (status, body)
+        self.fail_next: dict[str, list[tuple[int, str]]] = {}  # path -> one (status, body) for each next request
+        self.system_in_middle = "reject"  # reject, drop or keep
         self.fail_type = "text/plain"
 
 
@@ -134,7 +138,10 @@ def make_handler(state: State):
             state.requests.append(("POST", self.path, body))
             if not self._authorized():
                 return
-            if self.path in state.fail:
+            if state.fail_next.get(self.path):
+                status, text = state.fail_next[self.path].pop(0)
+                self._send(status, text.encode(), state.fail_type)
+            elif self.path in state.fail:
                 status, text = state.fail[self.path]
                 self._send(status, text.encode(), state.fail_type)
             elif self.path == "/tokenize":
@@ -147,10 +154,13 @@ def make_handler(state: State):
                 self._send(200, {"input_tokens": 12})
             elif self.path == "/v1/messages":
                 roles = [m["role"] for m in body["messages"]]
-                if "system" in roles[1:]:
+                if "system" in roles[1:] and state.system_in_middle == "reject":
                     self._send(500, {"error": {"code": 500, "message": "System message must be at the beginning.",
                                                "type": "server_error"}})
                     return
+                if state.system_in_middle == "drop":
+                    first, *rest = body["messages"]
+                    body = {**body, "messages": [first, *(m for m in rest if m["role"] != "system")]}
                 for key in ("temperature", "top_p", "top_k"):
                     if key in body:
                         state.slot_params[key] = body[key]

@@ -491,7 +491,14 @@ just probe configs/qwen38-external.toml --kind speed --target 1000 --target 2300
 
 The memory sampler runs during the probes and writes `probes/memory.csv` and `probes/memory.json`. A long prompt fills the context, thus a probe can use more GTT than the trials. The GTT peak of the report includes the probes.
 
-With `protocol` or `all`, the protocol probe runs first, and it is a gate. When the case `plain`, `tool_call` or `tool_round_trip` fails, the harness does not run the speed probe and the trials of that configuration. It prints the failed cases, writes the reason to `run.json` (key `probe_gate`: `failed_cases`, `reason`, `at`) and to `run.log`, stops the server and continues with the next configuration. The exit code is then 1. The report shows the reason in "Runs". The other cases do not stop a run.
+With `protocol` or `all`, the protocol probe runs first, and it is a gate. These cases fail the gate:
+
+- `plain`, `tool_call` or `tool_round_trip` fails.
+- `system_in_middle` gives an HTTP status that is not 200. Claude Code sends a system message after the first user message, so a template that rejects it (the HTTP 500 of the original Qwen3.8 template) fails each trial with `api_error`. A template that drops the message gives HTTP 200: the case fails, but it does not fail the gate, because that is a matter of quality.
+
+A case that fails the gate runs one more time, because one sample at temperature 1.0 can fail by chance. Its record in `protocol.json` is the second attempt, with the first attempt in `first_attempt`. The `probe` command does the same.
+
+When a case fails the gate two times, the harness does not run the speed probe and the trials of that configuration. It prints the failed cases, writes the reason to `run.json` (key `probe_gate`: `failed_cases`, `reason`, `at`) and to `run.log`, stops the server and continues with the next configuration. The exit code is then 1. The report shows the reason in "Runs". The other cases do not stop a run.
 
 ### Probe command
 
