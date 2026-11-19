@@ -6,6 +6,7 @@ import pytest
 
 from fake_llama import KEY, FakeLlama
 from llm_eval import cli, probe
+from runfiles import memory
 from test_cli import FakeSampler, fake, run  # noqa: F401  (fixture)
 from test_trial import root  # noqa: F401  (fixture)
 
@@ -96,7 +97,9 @@ def test_gate_stops_the_trials_when_a_basic_case_fails(root, fake, llama, probe_
     assert json.loads((out / "probes" / "memory.json").read_text()) == {"samples": 1}
     info = json.loads((out / "run.json").read_text())
     assert info["probe_gate"]["failed_cases"] == BASIC
+    assert info["probe_gate"]["reason"].endswith(", no trials ran")
     assert info["tasks"] == ["t1"] and info["config"]["name"] == "local-test"
+    assert info["image"] and info["claude_code_version"]
     assert "plain" in (out / "run.log").read_text()
     err = capsys.readouterr().err
     assert "tool_round_trip" in err and "HTTP 500" in err
@@ -163,6 +166,57 @@ def test_gate_on_resume_keeps_run_json(root, fake, llama):
     info = json.loads((out / "run.json").read_text())
     assert info["reps"] == 2 and info["trials"] == 2
     assert info["probe_gate"]["failed_cases"] == BASIC
+    assert info["probe_gate"]["reason"].endswith(
+        ", no more trials ran (1 of 2 trials have a result of an earlier start)")
+
+
+def test_resume_with_a_gate_that_passes_removes_the_stop_and_keeps_the_earlier_probes(root, fake, llama, monkeypatch,
+                                                                                     capsys):
+    class Sampler(FakeSampler):
+        def stop(self):
+            return memory(91000, 16000, 4000)
+
+    monkeypatch.setattr(cli, "MemorySampler", Sampler)
+    out = root / "o"
+    llama.state.fail["/v1/messages"] = (500, "template error")
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out), "--probe", "protocol") == 1
+    del llama.state.fail["/v1/messages"]
+
+    assert run(root, "--resume", str(out), "--probe", "protocol") == 0
+
+    info = json.loads((out / "run.json").read_text())
+    assert "probe_gate" not in info and info["finished_at"]
+    earlier, latest = (json.loads((out / name / "protocol.json").read_text()) for name in ("probes-1", "probes"))
+    assert probe.gate_failures(earlier) and not probe.gate_failures(latest)
+    capsys.readouterr()
+    assert cli.main(["report", str(out)]) == 0
+    assert "STOPPED" not in capsys.readouterr().out
+
+
+def test_resume_without_probe_removes_the_stop_of_the_gate(root, fake, llama):
+    out = root / "o"
+    llama.state.fail["/v1/messages"] = (500, "template error")
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out), "--probe", "protocol") == 1
+
+    assert run(root, "--resume", str(out)) == 0
+
+    assert "probe_gate" not in json.loads((out / "run.json").read_text())
+
+
+def test_resume_adds_the_image_to_a_run_that_an_older_gate_stopped(root, fake, llama):
+    out = root / "o"
+    llama.state.fail["/v1/messages"] = (500, "template error")
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out), "--probe", "protocol") == 1
+    info = json.loads((out / "run.json").read_text())
+    old = {key: value for key, value in info.items() if key not in ("image", "claude_code_version")}
+    (out / "run.json").write_text(json.dumps(old))
+    (out / "probes-1").mkdir()
+
+    assert run(root, "--resume", str(out), "--probe", "protocol") == 1
+
+    info = json.loads((out / "run.json").read_text())
+    assert info["image"] and info["claude_code_version"]
+    assert (out / "probes-2" / "protocol.json").exists()
 
 
 def test_probe_target_needs_probe(root, fake, capsys):

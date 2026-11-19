@@ -356,6 +356,7 @@ The default run directory is `~/daybook-evidence/local-llm/eval/<run-id>/`, wher
     speed.json             the speed probe
     memory.csv             the memory sampler during the probes
     memory.json            the memory summary of the probes, the keys of "memory" in result.json
+  probes-<n>/              the probes of an earlier start (run --resume --probe), the same files
   <task-id>-r<rep>/
     result.json            the result of the trial
     transcript.jsonl       the stream-json output of Claude Code
@@ -498,7 +499,9 @@ With `protocol` or `all`, the protocol probe runs first, and it is a gate. These
 
 A case that fails the gate runs one more time, because one sample at temperature 1.0 can fail by chance. Its record in `protocol.json` is the second attempt, with the first attempt in `first_attempt`. The `probe` command does the same.
 
-When a case fails the gate two times, the harness does not run the speed probe and the trials of that configuration. It prints the failed cases, writes the reason to `run.json` (key `probe_gate`: `failed_cases`, `reason`, `at`) and to `run.log`, stops the server and continues with the next configuration. The exit code is then 1. The report shows the reason in "Runs". The other cases do not stop a run.
+When a case fails the gate two times, the harness does not run the speed probe and the trials of that configuration. It prints the failed cases, writes the reason to `run.json` (key `probe_gate`: `failed_cases`, `reason`, `at`) and to `run.log`, stops the server and continues with the next configuration. The exit code is then 1. The report shows the reason in "Runs". The other cases do not stop a run. `run.json` already has the image and the Claude Code version, because the harness writes `run.json` before the probes.
+
+The reason tells if trials ran: "no trials ran", or on a resumed run "no more trials ran (N of M trials have a result of an earlier start)". `--resume` removes the `probe_gate` key of an earlier start, and a new gate stop writes it again. `--resume --probe` keeps the probe files of the earlier start: it moves `probes/` to `probes-1/` (the next free number), and the new files go to `probes/`.
 
 ### Probe command
 

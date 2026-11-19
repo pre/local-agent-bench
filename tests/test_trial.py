@@ -8,7 +8,7 @@ from llm_eval.config import load_config
 from llm_eval.podman import run_args
 from llm_eval.server import ExternalServer, RemoteServer, ServerError, open_server
 from llm_eval.task import load_task
-from llm_eval.trial import RunContext, agent_env, execute_run, make_run_id
+from llm_eval.trial import RunContext, agent_env, execute_run, make_run_id, start_run
 from test_config import EXTERNAL, REMOTE
 from test_results import RESULT_OK, tool_result, tool_use
 from test_task import make_task
@@ -50,7 +50,8 @@ def run(root: Path, podman, reps=1, observers=(), resume=False, config="c.toml")
     out = root / "out"
     with open_server(cfg.server, root / "scratch", gtt_total=lambda: 112640) as server:
         ctx = RunContext("run1", out, cfg, root, podman, server, list(observers))
-        results = execute_run(ctx, [load_task(root / "tasks" / "t1")], reps, resume=resume)
+        tasks = [load_task(root / "tasks" / "t1")]
+        results = execute_run(ctx, tasks, reps, start_run(ctx, tasks, reps, resume=resume))
     return results, out
 
 

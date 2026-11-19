@@ -201,13 +201,9 @@ def log(ctx: RunContext, line: str) -> None:
         f.write(line + "\n")
 
 
-def execute_run(ctx: RunContext, tasks: list[Task], reps: int, resume: bool = False) -> list[dict]:
-    """Run each task `reps` times, one trial after the other. Write run.json and run.log.
-
-    An exception in a trial gives a result with failure_reason "harness_error".
-    With `resume`, the trials that have a result.json do not run again.
-    """
-    ctx.secret_env = {**ctx.server.secret_env(), **read_profile_secrets(ctx.config.client.secrets)}
+def start_run(ctx: RunContext, tasks: list[Task], reps: int, resume: bool = False) -> dict:
+    """Write run.json before the probes and the trials, and return its values. A resumed
+    run keeps its values, gets a resumed_at time and loses the probe gate of an earlier start."""
     ctx.out_dir.mkdir(parents=True, exist_ok=True)
     image = ctx.config.client.image
     ctx.image = ctx.podman.image_info(image)
@@ -218,6 +214,10 @@ def execute_run(ctx: RunContext, tasks: list[Task], reps: int, resume: bool = Fa
     if resume:
         run_info = json.loads(run_file.read_text())
         run_info.setdefault("resumed_at", []).append(utc_now())
+        run_info.pop("probe_gate", None)
+        # A run that the probe gate stopped before this version of the harness has no image.
+        run_info.setdefault("image", ctx.image)
+        run_info.setdefault("claude_code_version", ctx.claude_code_version)
     else:
         run_info = {
             "run_id": ctx.run_id,
@@ -231,7 +231,18 @@ def execute_run(ctx: RunContext, tasks: list[Task], reps: int, resume: bool = Fa
         }
     run_info["server"] = ctx.server.describe()
     write_json(run_file, run_info)
+    return run_info
 
+
+def execute_run(ctx: RunContext, tasks: list[Task], reps: int, run_info: dict) -> list[dict]:
+    """Run each task `reps` times, one trial after the other. Update run.json (the
+    values of start_run) and write run.log.
+
+    An exception in a trial gives a result with failure_reason "harness_error".
+    The trials that have a result.json do not run again.
+    """
+    ctx.secret_env = {**ctx.server.secret_env(), **read_profile_secrets(ctx.config.client.secrets)}
+    run_file = ctx.out_dir / "run.json"
     trials = [(task, rep) for task in tasks for rep in range(1, reps + 1)]
     log(ctx, f"{utc_now()} run {ctx.run_id}: {len(trials)} trials, server {ctx.server.cfg.url}")
     results = []

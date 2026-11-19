@@ -19,7 +19,7 @@ from .sampler import MemorySampler
 from .selfcheck import selfcheck_task
 from .server import ServerError, open_server
 from .task import Task, TaskError, find_tasks
-from .trial import RunContext, execute_run, log, make_run_id, utc_now
+from .trial import RunContext, execute_run, log, make_run_id, start_run, utc_now
 
 DEFAULT_OUT = Path.home() / "daybook-evidence" / "local-llm" / "eval"
 TIER_REPS = {"quick": 1, "full": 3}
@@ -172,7 +172,8 @@ def selfcheck_plans(podman, plans: list[RunPlan], scratch: Path) -> bool:
 
 
 def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> bool:
-    """Start the server, run the trials, stop the server. Return False on a server error."""
+    """Start the server, run the trials, stop the server. Return False on a server error
+    or a stop of the probe gate."""
     run_id = plan.run_id or make_run_id(plan.config.name)
     out_dir = plan.out_dir or DEFAULT_OUT / run_id
     print(f"run {run_id}: {out_dir}")
@@ -182,9 +183,10 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
             server.check_health()
             observers = make_observers(plan.config.server, podman)
             ctx = RunContext(run_id, out_dir, plan.config, args.root, podman, server, observers)
-            if args.probe and not probe_run(ctx, plan, args.probe, args.probe_targets):
+            run_info = start_run(ctx, plan.tasks, plan.reps, resume=plan.resume)
+            if args.probe and not probe_run(ctx, args.probe, args.probe_targets):
                 return False
-            results = execute_run(ctx, plan.tasks, plan.reps, resume=plan.resume)
+            results = execute_run(ctx, plan.tasks, plan.reps, run_info)
     except ServerError as e:
         print(f"llm-eval: {plan.config.name}: {e}", file=sys.stderr)
         return False
@@ -196,14 +198,17 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
     return True
 
 
-def probe_run(ctx: RunContext, plan: RunPlan, choice: str, targets: list[int] | None) -> bool:
+def probe_run(ctx: RunContext, choice: str, targets: list[int] | None) -> bool:
     """Probe the server of the run into <run-dir>/probes/. The protocol probe runs
-    first. When a case of probe.GATE_CASES fails, the speed probe and the trials
-    do not run, and the result is False. The memory sampler runs during the
-    probes and writes probes/memory.csv and probes/memory.json."""
+    first. When a case fails the gate (see probe.gate_failures), the speed probe and
+    the trials do not run, and the result is False. The memory sampler runs during
+    the probes and writes probes/memory.csv and probes/memory.json. The probes of
+    an earlier start of the run move to probes-<n>."""
     server = ctx.config.server
     probes = ctx.out_dir / "probes"
-    probes.mkdir(parents=True, exist_ok=True)
+    if probes.exists():
+        keep_earlier_probes(probes)
+    probes.mkdir()
     sampler = MemorySampler()
     sampler.start(probes)
     try:
@@ -215,27 +220,30 @@ def probe_run(ctx: RunContext, plan: RunPlan, choice: str, targets: list[int] | 
             if kind == "protocol":
                 failed = probe.gate_failures(json.loads(paths["protocol"].read_text()))
                 if failed:
-                    stop_before_trials(ctx, plan, failed)
+                    stop_before_trials(ctx, failed)
                     return False
         return True
     finally:
         write_json(probes / "memory.json", sampler.stop())
 
 
-def stop_before_trials(ctx: RunContext, plan: RunPlan, failed: list[dict]) -> None:
+def keep_earlier_probes(probes: Path) -> None:
+    """Move probes/ to probes-<n>, with the first n that is free."""
+    n = 1
+    while probes.with_name(f"probes-{n}").exists():
+        n += 1
+    probes.rename(probes.with_name(f"probes-{n}"))
+
+
+def stop_before_trials(ctx: RunContext, failed: list[dict]) -> None:
     """Write the reason to run.json, run.log and stderr."""
     names = [case["name"] for case in failed]
-    reason = f"the protocol probe failed the basic cases {', '.join(names)}, no trials ran"
     run_file = ctx.out_dir / "run.json"
-    info = json.loads(run_file.read_text()) if plan.resume else {
-        "run_id": ctx.run_id,
-        "config": {"name": ctx.config.name, "path": str(ctx.config.path), "sha256": ctx.config.sha256,
-                   "values": ctx.config.raw},
-        "tasks": [t.id for t in plan.tasks],
-        "reps": plan.reps,
-        "started_at": utc_now(),
-    }
-    info["server"] = ctx.server.describe()
+    info = json.loads(run_file.read_text())
+    done, total = len(list(ctx.out_dir.glob("*/result.json"))), len(info["tasks"]) * info["reps"]
+    ran = (f"no more trials ran ({done} of {total} trials have a result of an earlier start)" if done
+           else "no trials ran")
+    reason = f"the protocol probe failed the basic cases {', '.join(names)}, {ran}"
     info["probe_gate"] = {"failed_cases": names, "reason": reason, "at": utc_now()}
     write_json(run_file, info)
     log(ctx, f"{utc_now()} run {ctx.run_id}: STOPPED, {reason}")
