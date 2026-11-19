@@ -125,7 +125,7 @@ class ConfigStats:
 
     @property
     def total_wall(self) -> float:
-        return sum(t["wall_time_s"] for t in self.trials)
+        return sum(t["wall_time_s"] or 0 for t in self.trials)
 
     @property
     def failures(self) -> Counter:
@@ -272,7 +272,7 @@ def _failures(rows: list[ConfigStats]) -> list[str]:
             lines.append("No failed trials.")
             continue
         lines += _table(header, [[t["run_id"], t["task"], t["rep"], t["failure_reason"], _num(t["score"], 2),
-                                  _failed_checks(t), t["turns"], _num(t["wall_time_s"])] for t in failed])
+                                  _failed_checks(t), "n/a" if t["turns"] is None else t["turns"], _num(t["wall_time_s"])] for t in failed])
     return lines
 
 

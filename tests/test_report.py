@@ -73,6 +73,19 @@ def test_harness_errors_are_not_in_pass_rate_or_score(tmp_path):
     assert stats.failures == {"verify_failed": 1}
 
 
+def test_harness_error_without_wall_time_and_turns(tmp_path):
+    # The harness writes null for these values when a trial raises before the agent runs.
+    trials = [trial("t1", wall=40.0),
+              trial("t2", passed=False, reason="harness_error", wall=None, turns=None)]
+
+    run = load_run(write_run(tmp_path / "r", trials))
+    (stats,) = config_stats([run])
+
+    assert stats.total_wall == 40.0
+    assert stats.median_wall == 40.0
+    assert "harness" in render_report([run])
+
+
 def test_rates_come_from_summed_tokens_and_seconds(tmp_path):
     trials = [trial("t1", server=server(1000, 10.0, 100, 2.0, 60, 100)),
               trial("t2", server=server(100, 2.0, 300, 20.0, 10, 100)),
