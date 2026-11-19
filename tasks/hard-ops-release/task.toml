@@ -3,5 +3,6 @@ title = "Make the release installer meet its requirements"
 category = "config"
 language = "shell"
 quick = false
-timeout_s = 3600
+hard = true
+timeout_s = 7200
 max_turns = 100

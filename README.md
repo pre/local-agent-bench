@@ -311,6 +311,8 @@ The log has no client ID. If other clients use an external server during a trial
 | Option | Tasks | Repetitions |
 |---|---|---|
 | `--tier quick` | Tasks with `quick = true` | 1 |
+| `--tier base` | Tasks without `hard = true` | 1 |
+| `--tier hard` | Tasks with `hard = true` | 1 |
 | `--tier full` | All tasks | 3 |
 | No `--tier` | All tasks | 1 |
 
@@ -388,7 +390,7 @@ A trial passes only if Claude Code stops normally and the check passes. The fail
 
 ```
 tasks/<task-id>/
-  task.toml     id, title, category, language, quick, timeout_s, max_turns
+  task.toml     id, title, category, language, quick, hard (optional), timeout_s, max_turns
   prompt.md     the text that the agent gets
   workspace/    the start files. The harness copies them to /work
   verify/       hidden from the agent
@@ -405,6 +407,8 @@ quick = true              # true: the task is also in the quick tier
 timeout_s = 1800          # wall time limit of the agent
 max_turns = 60
 ```
+
+A hard task (ID `hard-<name>`) has `hard = true`, `quick = false` and `timeout_s = 7200`. The default of `hard` is false. The `hard` tier has only the hard tasks, and the `base` tier has all other tasks. The time limit is high because the local model is about 11 times slower than Sonnet 5.5, which needed up to 517 s for a hard task. A unit test checks that each task with an ID that starts with `hard-` has `hard = true` and no `quick = true`.
 
 Rules for `verify.sh`:
 

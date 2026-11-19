@@ -19,6 +19,7 @@ class Task:
     timeout_s: int
     max_turns: int
     dir: Path
+    hard: bool = False
 
     @property
     def prompt(self) -> str:
@@ -52,7 +53,7 @@ def load_task(task_dir: Path) -> Task:
         raise TaskError(f"{task_dir}/task.toml: missing keys: {', '.join(missing)}")
     if raw["id"] != task_dir.name:
         raise TaskError(f"{task_dir}/task.toml: id {raw['id']!r} is not the directory name")
-    return Task(**{key: raw[key] for key in REQUIRED_KEYS}, dir=task_dir)
+    return Task(**{key: raw[key] for key in REQUIRED_KEYS}, dir=task_dir, hard=raw.get("hard", False))
 
 
 def find_tasks(tasks_dir: Path, ids: list[str] | None = None) -> list[Task]:

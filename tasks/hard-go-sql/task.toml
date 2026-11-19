@@ -3,5 +3,6 @@ title = "Add grouping and aggregates to the SQL engine"
 category = "feature"
 language = "go"
 quick = false
+hard = true
 timeout_s = 7200
 max_turns = 100

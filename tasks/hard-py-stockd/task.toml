@@ -3,5 +3,6 @@ title = "Find why the stock is wrong after a restart of the event-sourced servic
 category = "investigate"
 language = "python"
 quick = false
-timeout_s = 3600
+hard = true
+timeout_s = 7200
 max_turns = 100

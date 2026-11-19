@@ -34,12 +34,19 @@ def test_loads_task(tmp_path):
     assert task.id == "t1"
     assert task.title == "A title"
     assert task.quick is True
+    assert task.hard is False
     assert task.timeout_s == 600
     assert task.max_turns == 30
     assert task.prompt == "Do the work.\n"
     assert task.workspace == tmp_path / "t1" / "workspace"
     assert task.verify_dir == tmp_path / "t1" / "verify"
     assert task.solution == tmp_path / "t1" / "solution"
+
+
+def test_loads_the_hard_flag(tmp_path):
+    toml = TASK_TOML.format(id="t1").replace("quick = true", "quick = false\nhard = true")
+
+    assert load_task(make_task(tmp_path, "t1", toml)).hard is True
 
 
 def test_id_must_match_directory(tmp_path):
@@ -90,3 +97,10 @@ def test_repository_tasks_load():
     ids = [t.id for t in find_tasks(ROOT / "tasks")]
 
     assert "go-bugfix" in ids
+
+
+def test_repository_hard_tasks_have_the_hard_flag_and_are_not_quick():
+    tasks = find_tasks(ROOT / "tasks")
+
+    assert {t.id for t in tasks if t.hard} == {t.id for t in tasks if t.id.startswith("hard-")}
+    assert [t.id for t in tasks if t.hard and t.quick] == []

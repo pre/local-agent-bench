@@ -22,7 +22,13 @@ from .task import Task, TaskError, find_tasks
 from .trial import RunContext, execute_run, log, make_run_id, start_run, utc_now
 
 DEFAULT_OUT = Path.home() / "daybook-evidence" / "local-llm" / "eval"
-TIER_REPS = {"quick": 1, "full": 3}
+TIER_REPS = {"quick": 1, "base": 1, "hard": 1, "full": 3}
+TIER_TASKS = {
+    "quick": lambda task: task.quick,
+    "base": lambda task: not task.hard,
+    "hard": lambda task: task.hard,
+    "full": lambda task: True,
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,6 +58,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     source.add_argument("--resume", type=Path, metavar="RUN_DIR",
                         help="continue a run: run the trials that have no result.json")
     p.add_argument("--tier", choices=TIER_REPS, help="quick: tasks with quick = true, 1 repetition. "
+                   "base: tasks without hard = true, 1 repetition. hard: tasks with hard = true, 1 repetition. "
                    "full: all tasks, 3 repetitions (default: all tasks, 1 repetition)")
     p.add_argument("--task", action="append", dest="tasks", help="task ID, can repeat (default: from the tier)")
     p.add_argument("--reps", type=int, help="repetitions (default: from the tier)")
@@ -139,8 +146,8 @@ def new_plans(args: argparse.Namespace) -> list[RunPlan]:
     if args.out and (args.out / "run.json").exists():
         raise ConfigError(f"{args.out} has a run already. Use --resume {args.out} to continue it")
     tasks = find_tasks(args.root / "tasks", args.tasks)
-    if args.tier == "quick" and not args.tasks:
-        tasks = [t for t in tasks if t.quick]
+    if args.tier and not args.tasks:
+        tasks = [t for t in tasks if TIER_TASKS[args.tier](t)]
     reps = args.reps or TIER_REPS.get(args.tier, 1)
     return [RunPlan(load_config(path), tasks, reps, args.out) for path in args.configs]
 

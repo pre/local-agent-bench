@@ -3,5 +3,6 @@ title = "Implement the retention planner of the backup tool"
 category = "feature"
 language = "rust"
 quick = false
+hard = true
 timeout_s = 7200
 max_turns = 100

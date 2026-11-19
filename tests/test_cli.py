@@ -140,20 +140,26 @@ def trial_dirs(out):
     return sorted(d.name for d in out.iterdir() if d.is_dir())
 
 
-def test_tier_quick_runs_quick_tasks_once(two_tasks, fake):
-    out = two_tasks / "o"
+@pytest.fixture
+def hard_task(two_tasks):
+    toml = TASK_TOML.format(id="h1").replace("quick = true", "quick = false\nhard = true")
+    make_task(two_tasks / "tasks", "h1", toml)
+    (two_tasks / "tasks" / "h1" / "solution" / "fixed.txt").write_text("")
+    return two_tasks
 
-    assert run(two_tasks, "--config", str(two_tasks / "c.toml"), "--tier", "quick", "--out", str(out)) == 0
 
-    assert trial_dirs(out) == ["t1-r1"]
+@pytest.mark.parametrize("tier, dirs", [
+    ("quick", ["t1-r1"]),
+    ("base", ["t1-r1", "t2-r1"]),
+    ("hard", ["h1-r1"]),
+    ("full", ["h1-r1", "h1-r2", "h1-r3", "t1-r1", "t1-r2", "t1-r3", "t2-r1", "t2-r2", "t2-r3"]),
+])
+def test_tiers_select_tasks_and_repetitions(hard_task, fake, tier, dirs):
+    out = hard_task / "o"
 
+    assert run(hard_task, "--config", str(hard_task / "c.toml"), "--tier", tier, "--out", str(out)) == 0
 
-def test_tier_full_runs_all_tasks_three_times(two_tasks, fake):
-    out = two_tasks / "o"
-
-    assert run(two_tasks, "--config", str(two_tasks / "c.toml"), "--tier", "full", "--out", str(out)) == 0
-
-    assert trial_dirs(out) == ["t1-r1", "t1-r2", "t1-r3", "t2-r1", "t2-r2", "t2-r3"]
+    assert trial_dirs(out) == dirs
 
 
 def test_task_and_reps_override_the_tier(two_tasks, fake):

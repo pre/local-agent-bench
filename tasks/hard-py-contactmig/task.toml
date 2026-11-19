@@ -3,5 +3,6 @@ title = "Implement the contact store migration from its specification"
 category = "feature"
 language = "python"
 quick = false
-timeout_s = 3600
+hard = true
+timeout_s = 7200
 max_turns = 100
