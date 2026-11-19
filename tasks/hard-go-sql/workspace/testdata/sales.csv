@@ -1,0 +1,11 @@
+id:INT,region:TEXT,product:TEXT,qty:INT,price:FLOAT,rep:TEXT,returned:BOOL
+1,north,widget,10,2.5,ann,false
+2,south,gadget,3,10.0,bob,false
+3,north,gadget,7,10.0,ann,true
+4,east,widget,,2.5,cid,false
+5,south,widget,12,2.25,bob,false
+6,north,gizmo,1,99.99,,false
+7,,widget,4,2.5,dan,false
+8,east,gizmo,2,95.0,cid,true
+9,south,gadget,5,,bob,false
+10,north,widget,6,2.5,ann,false
