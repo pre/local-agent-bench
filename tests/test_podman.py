@@ -92,3 +92,12 @@ def test_output(tmp_path):
     exe = write_fake_podman(tmp_path, 'echo "2.1.328 (Claude Code)"\n')
 
     assert Podman(str(exe)).output(spec(command=["claude", "--version"])) == "2.1.328 (Claude Code)"
+
+
+def test_call_returns_exit_code_and_both_outputs(tmp_path):
+    exe = write_fake_podman(tmp_path, 'echo "out $*"; echo err >&2; exit 4\n')
+
+    code, text = Podman(str(exe)).call(["logs", "c1"])
+
+    assert code == 4
+    assert "out logs c1" in text and "err" in text

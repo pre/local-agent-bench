@@ -81,6 +81,12 @@ class Podman:
         )
         return proc.stdout.strip()
 
+    def call(self, args: list[str]) -> tuple[int, str]:
+        """Run one podman command. Return the exit code and stdout with stderr."""
+        proc = subprocess.run([self.executable, *args], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, errors="replace")
+        return proc.returncode, proc.stdout
+
     def image_info(self, image: str) -> dict:
         proc = subprocess.run(
             [self.executable, "image", "inspect", image], capture_output=True, text=True, check=True
