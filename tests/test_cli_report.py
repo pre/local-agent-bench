@@ -7,7 +7,7 @@ import pytest
 from fake_llama import KEY, FakeLlama
 from llm_eval import cli
 from runfiles import SHA_B, trial, write_run
-from test_config import EXTERNAL
+from test_config import EXTERNAL, REMOTE
 
 
 @pytest.fixture
@@ -86,3 +86,13 @@ def test_probe_speed_uses_context_and_max_context(fake, tmp_path, monkeypatch):
     assert [r["target_tokens"] for r in data["results"]] == [1000]
     assert [s["target_tokens"] for s in data["skipped"]] == [2000, 3500]
     assert "context of the configuration (4096 tokens)" in data["skipped"][1]["reason"]
+
+
+def test_probe_refuses_a_remote_endpoint(tmp_path, capsys):
+    path = tmp_path / "remote.toml"
+    path.write_text(REMOTE)
+
+    code = cli.main(["probe", "--config", str(path)])
+
+    assert code == 2
+    assert "local server" in capsys.readouterr().err

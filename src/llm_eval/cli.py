@@ -228,6 +228,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 def cmd_probe(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    if config.server.mode == "remote":
+        raise ConfigError("probe works only with a local server, not with server.mode 'remote'")
     out_dir = args.out or DEFAULT_OUT / f"probe-{make_run_id(config.name)}"
     server = config.server
     kinds = ("speed", "protocol") if args.kind == "all" else (args.kind,)
