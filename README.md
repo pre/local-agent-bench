@@ -120,7 +120,7 @@ The configurations of the first matrix:
 | `qwen38-temp-0.6.toml` | `--temp 0.6` |
 | `qwen38-external.toml` | External: the server `llama-qwen38` that runs already |
 
-The chat template accepts only the reasoning effort values xhigh (the default, also for "high"), medium and low. Another value gives an error for each request.
+The chat template accepts only the reasoning effort values xhigh (the default, also for "high"), medium and low. Another value gives an error for each request. With xhigh and low the template adds one instruction line to the system prompt, with medium it adds no line.
 
 ## Network
 
@@ -154,8 +154,8 @@ The harness starts the observers just before the agent container and stops them 
 `memory` (always on): a thread of the harness reads the host memory each second and writes `memory.csv` in the trial directory with the columns `time` (UTC), `gtt_used_mib`, `mem_available_mib`, `swap_free_mib`, `psi_some_avg10`, `psi_full_avg10` (`/proc/pressure/memory`).
 
 ```json
-{"gtt_used_start_mib": 88021, "gtt_used_peak_mib": 88340, "mem_available_min_mib": 19650,
- "swap_free_min_mib": 4073, "psi_some_avg10_max": 0.0, "psi_full_avg10_max": 0.0, "samples": 812}
+{"gtt_used_start_mib": 91828, "gtt_used_peak_mib": 91934, "mem_available_min_mib": 16008,
+ "swap_free_min_mib": 4053, "psi_some_avg10_max": 2.09, "psi_full_avg10_max": 1.94, "samples": 125}
 ```
 
 `server` (on for a managed server, and for an external server with `container`): reads the log of the server container for the time of the trial (`podman logs --since`), saves it as `server.log` in the trial directory and adds the `print_timing` lines of llama-server. A rate is the total tokens divided by the total seconds of all requests. The draft values are `null` without a draft model. Without a container, `server` is `null`.
