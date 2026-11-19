@@ -1,12 +1,14 @@
 """The trial procedure: workspace, agent container, diff, check container, result.json.
 
-Stage 2 seam: an observer (for example a memory sampler or a /metrics reader)
-has a `name`, `start(trial_dir)` and `stop() -> dict`. The harness starts it
-just before the agent container and stops it just after. result.json gets the
-dict under the name of the observer ("server" and "memory" are reserved).
+An observer (the memory sampler, the server log reader) has a `name`,
+`start(trial_dir)` and `stop() -> dict`. The harness starts it just before the
+agent container and stops it just after. result.json gets the dict under the
+name of the observer ("server" and "memory").
 """
 
+import json
 import shutil
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,8 +77,12 @@ def claude_command(task: Task) -> list[str]:
     ]
 
 
+def trial_dir_of(ctx: RunContext, task: Task, rep: int) -> Path:
+    return ctx.out_dir / f"{task.id}-r{rep}"
+
+
 def run_trial(ctx: RunContext, task: Task, rep: int) -> dict:
-    trial_dir = ctx.out_dir / f"{task.id}-r{rep}"
+    trial_dir = trial_dir_of(ctx, task, rep)
     trial_dir.mkdir(parents=True)
     work = trial_dir / "work"
     started = utc_now()
@@ -95,8 +101,10 @@ def run_trial(ctx: RunContext, task: Task, rep: int) -> dict:
     )
     for observer in ctx.observers:
         observer.start(trial_dir)
-    agent = ctx.podman.run(spec, trial_dir / "transcript.jsonl", trial_dir / "agent.stderr", task.timeout_s)
-    observed = {observer.name: observer.stop() for observer in ctx.observers}
+    try:
+        agent = ctx.podman.run(spec, trial_dir / "transcript.jsonl", trial_dir / "agent.stderr", task.timeout_s)
+    finally:
+        observed = {observer.name: observer.stop() for observer in ctx.observers}
 
     image = ctx.config.client.image
     collect_diff(ctx.podman, image, work, trial_dir / "agent.diff", baseline, task.id)
@@ -149,32 +157,92 @@ def run_trial(ctx: RunContext, task: Task, rep: int) -> dict:
     return result
 
 
-def execute_run(ctx: RunContext, tasks: list[Task], reps: int) -> list[dict]:
-    """Run each task `reps` times, one trial after the other. Write run.json."""
+def error_result(ctx: RunContext, task: Task, rep: int, error: Exception, started: str) -> dict:
+    """The result of a trial that the harness could not complete. It has the keys of a normal result."""
+    trial_dir = trial_dir_of(ctx, task, rep)
+    trial_dir.mkdir(parents=True, exist_ok=True)
+    (trial_dir / "harness_error.txt").write_text(traceback.format_exc())
+    result = {
+        "schema": RESULT_SCHEMA,
+        "run_id": ctx.run_id,
+        "task": task.id,
+        "rep": rep,
+        "config": {"name": ctx.config.name, "path": str(ctx.config.path), "sha256": ctx.config.sha256},
+        "passed": False,
+        "score": None,
+        "failure_reason": "harness_error",
+        "failure_detail": f"{type(error).__name__}: {error}"[:500],
+        **dict.fromkeys(["wall_time_s", "check_time_s", "turns", "tool_calls", "tool_errors", "api_errors",
+                         "tokens", "agent", "verify", "server", "memory", "baseline"]),
+        "claude_code_version": ctx.claude_code_version,
+        "image": ctx.image,
+        "started_at": started,
+        "finished_at": utc_now(),
+    }
+    write_json(trial_dir / "result.json", result)
+    redact_tree(trial_dir, ctx.server.api_key())
+    return result
+
+
+def log(ctx: RunContext, line: str) -> None:
+    """Write a line to stdout and to run.log of the run directory."""
+    print(line, flush=True)
+    with (ctx.out_dir / "run.log").open("a") as f:
+        f.write(line + "\n")
+
+
+def execute_run(ctx: RunContext, tasks: list[Task], reps: int, resume: bool = False) -> list[dict]:
+    """Run each task `reps` times, one trial after the other. Write run.json and run.log.
+
+    An exception in a trial gives a result with failure_reason "harness_error".
+    With `resume`, the trials that have a result.json do not run again.
+    """
     ctx.out_dir.mkdir(parents=True, exist_ok=True)
     image = ctx.config.client.image
     ctx.image = ctx.podman.image_info(image)
     version = ctx.podman.output(ContainerSpec(name=container_name("version", "run"), image=image,
                                               command=["claude", "--version"]))
     ctx.claude_code_version = version.split()[0] if version else None
-    run_info = {
-        "run_id": ctx.run_id,
-        "config": {"name": ctx.config.name, "path": str(ctx.config.path), "sha256": ctx.config.sha256,
-                   "values": ctx.config.raw},
-        "image": ctx.image,
-        "claude_code_version": ctx.claude_code_version,
-        "tasks": [t.id for t in tasks],
-        "reps": reps,
-        "started_at": utc_now(),
-    }
-    write_json(ctx.out_dir / "run.json", run_info)
+    run_file = ctx.out_dir / "run.json"
+    if resume:
+        run_info = json.loads(run_file.read_text())
+        run_info.setdefault("resumed_at", []).append(utc_now())
+    else:
+        run_info = {
+            "run_id": ctx.run_id,
+            "config": {"name": ctx.config.name, "path": str(ctx.config.path), "sha256": ctx.config.sha256,
+                       "values": ctx.config.raw},
+            "image": ctx.image,
+            "claude_code_version": ctx.claude_code_version,
+            "tasks": [t.id for t in tasks],
+            "reps": reps,
+            "started_at": utc_now(),
+        }
+    run_info["server"] = ctx.server.describe()
+    write_json(run_file, run_info)
 
+    trials = [(task, rep) for task in tasks for rep in range(1, reps + 1)]
+    log(ctx, f"{utc_now()} run {ctx.run_id}: {len(trials)} trials, server {ctx.server.cfg.url}")
     results = []
-    for task in tasks:
-        for rep in range(1, reps + 1):
-            results.append(run_trial(ctx, task, rep))
-            run_info.update(trials=len(results), passed=sum(r["passed"] for r in results))
-            write_json(ctx.out_dir / "run.json", run_info)
+    for task, rep in trials:
+        trial_dir = trial_dir_of(ctx, task, rep)
+        if (trial_dir / "result.json").exists():
+            results.append(json.loads((trial_dir / "result.json").read_text()))
+            continue
+        shutil.rmtree(trial_dir, ignore_errors=True)  # an incomplete trial of an interrupted run
+        ctx.server.check_health()
+        started = utc_now()
+        try:
+            result = run_trial(ctx, task, rep)
+        except Exception as e:
+            result = error_result(ctx, task, rep, e, started)
+        results.append(result)
+        passed = sum(r["passed"] for r in results)
+        verdict = "PASS" if result["passed"] else f"FAIL {result['failure_reason']}"
+        log(ctx, f"{utc_now()} [{len(results)}/{len(trials)}] {ctx.config.name} {task.id} r{rep} {verdict} "
+                 f"wall {result['wall_time_s']} s passed {passed}/{len(results)}")
+        run_info.update(trials=len(results), passed=passed)
+        write_json(run_file, run_info)
     run_info["finished_at"] = utc_now()
-    write_json(ctx.out_dir / "run.json", run_info)
+    write_json(run_file, run_info)
     return results

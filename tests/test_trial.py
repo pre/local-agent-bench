@@ -5,7 +5,7 @@ import pytest
 
 from fakes import FakePodman, check_by_marker
 from llm_eval.config import load_config
-from llm_eval.server import ExternalServer
+from llm_eval.server import ExternalServer, ServerError
 from llm_eval.task import load_task
 from llm_eval.trial import RunContext, agent_env, execute_run, make_run_id
 from test_config import EXTERNAL
@@ -13,6 +13,11 @@ from test_results import RESULT_OK, tool_result, tool_use
 from test_task import make_task
 
 SECRET = "sk-secret-123"
+
+
+@pytest.fixture(autouse=True)
+def healthy(monkeypatch):
+    monkeypatch.setattr(ExternalServer, "check_health", lambda self: None)
 
 
 @pytest.fixture
@@ -38,12 +43,12 @@ def agent_that(events, fix=True, code=0):
     return behaviour
 
 
-def run(root: Path, podman, reps=1, observers=()):
+def run(root: Path, podman, reps=1, observers=(), resume=False):
     cfg = load_config(root / "c.toml")
     out = root / "out"
     with ExternalServer(cfg.server, root / "scratch") as server:
         ctx = RunContext("run1", out, cfg, root, podman, server, list(observers))
-        results = execute_run(ctx, [load_task(root / "tasks" / "t1")], reps)
+        results = execute_run(ctx, [load_task(root / "tasks" / "t1")], reps, resume=resume)
     return results, out
 
 
@@ -162,3 +167,90 @@ def test_make_run_id():
     from datetime import datetime, timezone
 
     assert make_run_id("cfg", datetime(2026, 11, 19, 18, 1, 2, tzinfo=timezone.utc)) == "20261119T180102Z-cfg"
+
+
+def test_run_json_has_the_server_values(root):
+    podman = FakePodman(agent=agent_that([RESULT_OK]), check=check_by_marker())
+
+    _, out = run(root, podman)
+
+    server = json.loads((out / "run.json").read_text())["server"]
+    assert server == {"mode": "external", "url": "http://127.0.0.1:8080", "container": None}
+
+
+def test_exception_in_a_trial_becomes_a_harness_error(root):
+    calls = []
+
+    def agent(spec, m):
+        calls.append(spec)
+        if len(calls) == 1:
+            raise RuntimeError("podman went away")
+        return agent_that([RESULT_OK])(spec, m)
+
+    class Observer:
+        name = "memory"
+        stopped = 0
+
+        def start(self, trial_dir):
+            pass
+
+        def stop(self):
+            Observer.stopped += 1
+            return {}
+
+    podman = FakePodman(agent=agent, check=check_by_marker())
+
+    results, out = run(root, podman, reps=2, observers=[Observer()])
+
+    error, ok = results
+    assert error["passed"] is False
+    assert error["failure_reason"] == "harness_error"
+    assert "RuntimeError: podman went away" in error["failure_detail"]
+    assert set(error) == set(ok)
+    assert json.loads((out / "t1-r1" / "result.json").read_text()) == error
+    assert "podman went away" in (out / "t1-r1" / "harness_error.txt").read_text()
+    assert ok["passed"] is True
+    assert Observer.stopped == 2
+
+
+def test_progress_line_for_each_trial(root, capsys):
+    podman = FakePodman(agent=agent_that([RESULT_OK]), check=check_by_marker())
+
+    _, out = run(root, podman, reps=2)
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if " t1 r" in line]
+    assert "[1/2] local-test t1 r1 PASS wall 1.5 s passed 1/1" in lines[0]
+    assert "[2/2] local-test t1 r2 PASS wall 1.5 s passed 2/2" in lines[1]
+    log = (out / "run.log").read_text()
+    assert lines[0] in log and lines[1] in log
+
+
+def test_resume_skips_trials_with_a_result(root, capsys):
+    podman = FakePodman(agent=agent_that([RESULT_OK]), check=check_by_marker())
+    _, out = run(root, podman, reps=3)
+    (out / "t1-r2" / "result.json").unlink()  # an interrupted trial
+    (out / "t1-r3" / "result.json").unlink()
+    podman = FakePodman(agent=agent_that([RESULT_OK]), check=check_by_marker())
+
+    results, _ = run(root, podman, reps=3, resume=True)
+
+    assert len(podman.of_kind("agent")) == 2
+    assert [r["rep"] for r in results] == [1, 2, 3]
+    assert all(r["passed"] for r in results)
+    run_json = json.loads((out / "run.json").read_text())
+    assert run_json["trials"] == 3 and run_json["passed"] == 3
+    assert len(run_json["resumed_at"]) == 1
+    assert "[3/3] local-test t1 r3 PASS" in capsys.readouterr().out
+
+
+def test_unhealthy_server_stops_the_run(root, monkeypatch):
+    def unhealthy(self):
+        raise ServerError("server down")
+
+    monkeypatch.setattr(ExternalServer, "check_health", unhealthy)
+    podman = FakePodman(agent=agent_that([RESULT_OK]), check=check_by_marker())
+
+    with pytest.raises(ServerError):
+        run(root, podman)
+
+    assert podman.of_kind("agent") == []
