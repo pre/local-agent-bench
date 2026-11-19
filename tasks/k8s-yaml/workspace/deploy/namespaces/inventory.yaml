@@ -1,0 +1,22 @@
+# Owned by the platform team. Change requests go through the platform backlog.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: inventory
+  labels:
+    team: platform-inventory
+    pod-security.kubernetes.io/enforce: restricted
+---
+# Applied in the production clusters only.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute
+  namespace: inventory
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "6"
+    requests.memory: 12Gi
+    limits.cpu: "16"
+    limits.memory: 8Gi

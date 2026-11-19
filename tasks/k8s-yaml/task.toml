@@ -1,0 +1,7 @@
+id = "k8s-yaml"
+title = "Correct the inventory-api Kubernetes manifests"
+category = "config"
+language = "yaml"
+quick = true
+timeout_s = 1800
+max_turns = 60

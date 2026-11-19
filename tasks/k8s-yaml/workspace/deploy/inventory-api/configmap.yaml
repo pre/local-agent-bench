@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inventory-api-config
+  labels:
+    app.kubernetes.io/name: inventory-api
+    app.kubernetes.io/part-of: node-inventory
+data:
+  DB_URL: "postgres://inventory_api@inventory-db-rw.inventory.svc:5432/inventory?sslmode=verify-full"
+  LISTEN_ADDR: ":8080"
+  METRICS_ADDR: ":9090"
+  LOG_LEVEL: "info"
+  CACHE_TTL: "30s"
+  SYNC_INTERVAL: "5m"

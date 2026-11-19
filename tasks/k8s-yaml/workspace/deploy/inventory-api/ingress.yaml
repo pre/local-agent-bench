@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: inventory-api
+  labels:
+    app.kubernetes.io/name: inventory-api
+    app.kubernetes.io/part-of: node-inventory
+  annotations:
+    cert-manager.io/cluster-issuer: internal-ca
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - inventory.platform.example.internal
+      secretName: inventory-api-tls
+  rules:
+    - host: inventory.platform.example.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: inventory-api
+                port:
+                  name: http
