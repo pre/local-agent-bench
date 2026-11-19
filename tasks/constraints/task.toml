@@ -1,0 +1,7 @@
+id = "constraints"
+title = "Fix the pre-release order under change constraints"
+category = "constraints"
+language = "python"
+quick = true
+timeout_s = 1800
+max_turns = 60

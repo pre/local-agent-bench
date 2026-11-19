@@ -1,0 +1,6 @@
+[project]
+name = "imagepolicy"
+version = "0.7.0"
+description = "Select the container image tag to roll out"
+requires-python = ">=3.11"
+dependencies = []
