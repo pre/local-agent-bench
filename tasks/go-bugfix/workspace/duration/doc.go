@@ -18,8 +18,9 @@
 // "1h2h" are not valid.
 //
 // The fraction applies to the unit of its term: "1.5h" is 1 hour 30 minutes
-// and "1.05h" is 1 hour 3 minutes. Fraction digits below one nanosecond are
-// discarded.
+// and "1.05h" is 1 hour 3 minutes. Parse uses only the fraction digits that
+// give an exact number of nanoseconds (9 digits for "s", 11 digits for "h",
+// none for "ns") and ignores the digits after them.
 //
 // Format writes a duration in the same format, so Parse(Format(d)) == d.
 package duration

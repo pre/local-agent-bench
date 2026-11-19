@@ -48,14 +48,11 @@ func value(t term, size time.Duration) (time.Duration, error) {
 
 	// Keep only the fraction digits that give whole nanoseconds. Then
 	// size/scale is exact and frac*(size/scale) is less than size.
-	frac, scale := t.frac, int64(1)
-	for range frac {
-		scale *= 10
+	n, scale := 0, int64(1)
+	for n < len(t.frac) && int64(size)%(scale*10) == 0 {
+		n, scale = n+1, scale*10
 	}
-	for frac != "" && int64(size)%scale != 0 {
-		frac, scale = frac[:len(frac)-1], scale/10
-	}
-	if frac != "" {
+	if frac := t.frac[:n]; frac != "" {
 		f, _ := strconv.ParseInt(frac, 10, 64)
 		v += time.Duration(f) * (size / time.Duration(scale))
 	}
