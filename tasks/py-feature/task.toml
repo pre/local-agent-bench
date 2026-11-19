@@ -1,0 +1,7 @@
+id = "py-feature"
+title = "Add a capacity subcommand to the node inventory CLI"
+category = "feature"
+language = "python"
+quick = true
+timeout_s = 1800
+max_turns = 60

@@ -1,0 +1,105 @@
+[cluster]
+name = "hel1-prod-02"
+
+[[nodes]]
+name = "hel1-cp-r01-01"
+role = "control-plane"
+zone = "hel1-a"
+rack = "r01"
+cpu = 32
+memory = "128Gi"
+labels = { pool = "system" }
+
+[[nodes]]
+name = "hel1-cp-r02-01"
+role = "control-plane"
+zone = "hel1-b"
+rack = "r02"
+cpu = 32
+memory = "128Gi"
+labels = { pool = "system" }
+
+[[nodes]]
+name = "hel1-cp-r03-01"
+role = "control-plane"
+zone = "hel1-c"
+rack = "r03"
+cpu = 32
+memory = "128Gi"
+labels = { pool = "system" }
+
+[[nodes]]
+name = "hel1-cpu-r01-02"
+role = "worker"
+zone = "hel1-a"
+rack = "r01"
+cpu = 128
+memory = "768Gi"
+labels = { pool = "general", "node.kubernetes.io/instance-type" = "epyc-9554" }
+
+[[nodes]]
+name = "hel1-cpu-r01-03"
+role = "worker"
+zone = "hel1-a"
+rack = "r01"
+cpu = 128
+memory = "768Gi"
+labels = { pool = "general", "node.kubernetes.io/instance-type" = "epyc-9554" }
+
+[[nodes]]
+name = "hel1-cpu-r02-02"
+role = "worker"
+zone = "hel1-b"
+rack = "r02"
+cpu = 192
+memory = "1.5Ti"
+labels = { pool = "general", "node.kubernetes.io/instance-type" = "epyc-9654" }
+
+[[nodes]]
+name = "hel1-cpu-r03-02"
+role = "worker"
+zone = "hel1-c"
+rack = "r03"
+cpu = 128
+memory = "768Gi"
+cordoned = true
+labels = { pool = "general", "node.kubernetes.io/instance-type" = "epyc-9554" }
+
+[[nodes]]
+name = "hel1-gpu-r07-01"
+role = "gpu-worker"
+zone = "hel1-a"
+rack = "r07"
+cpu = 192
+memory = "2Ti"
+gpu = { model = "MI300X", count = 8 }
+labels = { pool = "gpu", "amd.com/gpu.product" = "MI300X" }
+
+[[nodes]]
+name = "hel1-gpu-r07-02"
+role = "gpu-worker"
+zone = "hel1-a"
+rack = "r07"
+cpu = 192
+memory = "2Ti"
+gpu = { model = "MI300X", count = 8 }
+labels = { pool = "gpu", "amd.com/gpu.product" = "MI300X" }
+
+[[nodes]]
+name = "hel1-gpu-r08-01"
+role = "gpu-worker"
+zone = "hel1-b"
+rack = "r08"
+cpu = 192
+memory = "2Ti"
+gpu = { model = "MI325X", count = 8 }
+cordoned = true
+labels = { pool = "gpu", "amd.com/gpu.product" = "MI325X" }
+
+[[nodes]]
+name = "hel1-edge-01"
+role = "edge"
+zone = "hel1-a"
+cpu = 16
+memory = "65536Mi"
+labels = { pool = "edge" }
