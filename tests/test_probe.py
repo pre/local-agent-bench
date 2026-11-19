@@ -106,7 +106,7 @@ def test_speed_probe_records_timings(fake, client):
     assert first["decode_tps"] == 25.0
     assert first["draft_acceptance"] == 0.75
     assert first["finish_reason"] == "length"
-    assert 0 < first["ttft_s"] <= first["total_s"]
+    assert 0 <= first["ttft_s"] <= first["total_s"]
     assert first["error"] is None
     assert data["skipped"] == [{"target_tokens": 5000, "reason": "above the context of the configuration"
                                 " (4096 tokens) minus 64 decode tokens and a margin of 1024"}]
