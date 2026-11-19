@@ -84,7 +84,7 @@ def test_run_stops_when_server_is_not_healthy(root, fake, monkeypatch, capsys):
 
 
 def test_run_bad_config(root, fake, capsys):
-    (root / "bad.toml").write_text('[server]\nmode = "managed"\n')
+    (root / "bad.toml").write_text('[server]\nmode = "other"\n')
 
     assert cli.main(["--root", str(root), "run", "--config", str(root / "bad.toml")]) == 2
-    assert "managed" in capsys.readouterr().err
+    assert "server.mode" in capsys.readouterr().err

@@ -166,3 +166,112 @@ def test_base_loop_is_an_error(tmp_path):
 def test_missing_file_is_an_error(tmp_path):
     with pytest.raises(ConfigError, match="no.toml: file not found"):
         load_config(write(tmp_path, 'base = "no.toml"\n' + EXTERNAL))
+
+
+MANAGED = """
+name = "managed-test"
+
+[server]
+mode = "managed"
+image = "example.org/llama@sha256:abc"
+models_dir = "~/models/m"
+model_file = "q4/m-00001-of-00002.gguf"
+model = "m"
+context_tokens = 4096
+api_key_file = "~/key"
+port = 8091
+
+[server.args]
+-ngl = 999
+--jinja = true
+--temp = 0.6
+
+[client]
+"""
+
+
+def test_loads_managed_server(tmp_path):
+    cfg = load_config(write(tmp_path, MANAGED))
+
+    server = cfg.server
+    assert server.mode == "managed"
+    assert server.url == "http://127.0.0.1:8091"
+    assert server.container == "llm-eval-server"
+    assert server.model == "m"
+    managed = server.managed
+    assert managed.image == "example.org/llama@sha256:abc"
+    assert managed.models_dir == Path.home() / "models" / "m"
+    assert managed.model_file == "q4/m-00001-of-00002.gguf"
+    assert managed.port == 8091
+    assert managed.args == {"-ngl": 999, "--jinja": True, "--temp": 0.6}
+    assert managed.draft is None
+    assert managed.chat_template is None
+    assert managed.gtt_max_used_mib == 12288
+    assert managed.start_timeout_s == 900
+
+
+def test_managed_draft_and_template(tmp_path):
+    text = MANAGED.replace("[server.args]", """
+chat_template = "templates/t.jinja"
+gtt_max_used_mib = 100000
+
+[server.args]""").replace("[client]", """
+[server.draft]
+model_file = "mtp/d.gguf"
+args = { --spec-type = "draft-mtp" }
+
+[client]
+""").replace("port = 8091\n", "port = 8091\nstart_timeout_s = 60\n")
+
+    managed = load_config(write(tmp_path, text)).server.managed
+
+    assert managed.draft.model_file == "mtp/d.gguf"
+    assert managed.draft.args == {"--spec-type": "draft-mtp"}
+    assert managed.chat_template == "templates/t.jinja"
+    assert managed.gtt_max_used_mib == 100000
+    assert managed.start_timeout_s == 60
+
+
+def test_empty_draft_model_file_means_no_draft(tmp_path):
+    write(tmp_path, MANAGED.replace("[client]", '[server.draft]\nmodel_file = "d.gguf"\n[client]'), "base.toml")
+
+    cfg = load_config(write(tmp_path, 'base = "base.toml"\n[server.draft]\nmodel_file = ""\n', "v.toml"))
+
+    assert cfg.server.managed.draft is None
+
+
+def test_managed_image_must_be_pinned(tmp_path):
+    with pytest.raises(ConfigError, match="digest"):
+        load_config(write(tmp_path, MANAGED.replace("@sha256:abc", ":latest")))
+
+
+@pytest.mark.parametrize("flag", ["-c", "--port", "-m", "--alias", "--chat-template-file", "-md"])
+def test_managed_args_cannot_set_harness_flags(tmp_path, flag):
+    with pytest.raises(ConfigError, match=f"the harness sets {flag}"):
+        load_config(write(tmp_path, MANAGED.replace("-ngl = 999", f'{flag} = "x"')))
+
+
+@pytest.mark.parametrize("path", ["/etc/t.jinja", "other/t.jinja", "templates/../x.jinja"])
+def test_chat_template_must_be_below_templates(tmp_path, path):
+    with pytest.raises(ConfigError, match="templates/"):
+        load_config(write(tmp_path, MANAGED.replace("[server.args]", f'chat_template = "{path}"\n[server.args]')))
+
+
+def test_managed_keys_are_not_allowed_for_external(tmp_path):
+    with pytest.raises(ConfigError, match="server.image"):
+        load_config(write(tmp_path, EXTERNAL.replace('mode = "external"', 'mode = "external"\nimage = "x"')))
+
+
+def test_external_url_is_not_allowed_for_managed(tmp_path):
+    with pytest.raises(ConfigError, match="server.url"):
+        load_config(write(tmp_path, MANAGED.replace('mode = "managed"', 'mode = "managed"\nurl = "http://x"')))
+
+
+def test_external_container(tmp_path):
+    text = EXTERNAL.replace('mode = "external"', 'mode = "external"\ncontainer = "llama-x"')
+
+    cfg = load_config(write(tmp_path, text))
+
+    assert cfg.server.container == "llama-x"
+    assert cfg.server.managed is None
+    assert load_config(write(tmp_path, EXTERNAL, "e.toml")).server.container is None

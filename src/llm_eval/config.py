@@ -1,17 +1,27 @@
-"""Configuration files: one TOML file in configs/ with a [server] and a [client] part.
-
-Stage 2 adds "mode = managed" (see _server).
-"""
+"""Configuration files: one TOML file in configs/ with a [server] and a [client] part."""
 
 import hashlib
 import json
 import tomllib
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 DEFAULT_IMAGE = "localhost/llm-eval-agent:latest"
 PROXY = "proxy"
+MANAGED_CONTAINER = "llm-eval-server"
+
+# llama-server flags that the harness sets itself for a managed server.
+HARNESS_FLAGS = {"--host", "--port", "--api-key-file", "-m", "--model", "-a", "--alias", "-c", "--ctx-size",
+                 "--chat-template-file", "-md", "--model-draft", "--spec-draft-model"}
+
+COMMON_KEYS = {"mode", "api_key_file", "model", "context_tokens", "health_path", "agent_network", "agent_url"}
+EXTERNAL_KEYS = COMMON_KEYS | {"url", "container"}
+MANAGED_KEYS = COMMON_KEYS | {"image", "models_dir", "model_file", "port", "args", "draft", "chat_template",
+                              "gtt_max_used_mib", "start_timeout_s"}
+
+# A value of an args table: true gives the flag alone, false leaves the flag out.
+Args = dict[str, str | int | float | bool]
 
 
 class ConfigError(Exception):
@@ -19,18 +29,40 @@ class ConfigError(Exception):
 
 
 @dataclass(frozen=True)
+class DraftConfig:
+    model_file: str  # below models_dir
+    args: Args = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ManagedConfig:
+    """A llama-server container that the harness starts and stops."""
+    image: str  # pinned by digest
+    models_dir: Path  # mounted read-only at /models
+    model_file: str  # below models_dir
+    port: int  # host port on 127.0.0.1
+    args: Args = field(default_factory=dict)
+    draft: DraftConfig | None = None
+    chat_template: str | None = None  # below templates/ of the repository
+    gtt_max_used_mib: int = 12288
+    start_timeout_s: int = 900
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     mode: str
     url: str
     api_key_file: Path
-    model: str
-    context_tokens: int
+    model: str  # the model ID for Claude Code, and --alias of a managed server
+    context_tokens: int  # CLAUDE_CODE_MAX_CONTEXT_TOKENS, and -c of a managed server
     health_path: str = "/health"
     # "proxy": the agent container has no network and reaches the server through
     # a Unix socket relay of the harness. Any other value is a podman --network
     # value, and agent_url is then the server URL in the agent container.
     agent_network: str = PROXY
     agent_url: str | None = None
+    container: str | None = None  # the server container, for its log
+    managed: ManagedConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -98,20 +130,51 @@ def _sha256(raw: dict[str, Any]) -> str:
 
 
 def _server(raw: dict[str, Any]) -> ServerConfig:
-    _check_keys(raw, "server.", {f.name for f in ServerConfig.__dataclass_fields__.values()})
     mode = _require(raw, "server.", "mode")
-    if mode == "managed":
-        raise ConfigError("server.mode 'managed' is not implemented yet")
-    if mode != "external":
-        raise ConfigError(f"server.mode must be 'external', not {mode!r}")
-    values = dict(raw)
-    values["api_key_file"] = Path(_require(raw, "server.", "api_key_file")).expanduser()
-    for key in ("url", "model", "context_tokens"):
+    if mode not in ("external", "managed"):
+        raise ConfigError(f"server.mode must be 'external' or 'managed', not {mode!r}")
+    _check_keys(raw, "server.", EXTERNAL_KEYS if mode == "external" else MANAGED_KEYS)
+    for key in ("api_key_file", "model", "context_tokens"):
         _require(raw, "server.", key)
-    server = ServerConfig(**values)
+    values = {key: raw[key] for key in COMMON_KEYS & raw.keys()}
+    values["api_key_file"] = Path(raw["api_key_file"]).expanduser()
+    if mode == "external":
+        server = ServerConfig(**values, url=_require(raw, "server.", "url"), container=raw.get("container"))
+    else:
+        managed = _managed(raw)
+        server = ServerConfig(**values, url=f"http://127.0.0.1:{managed.port}", container=MANAGED_CONTAINER,
+                              managed=managed)
     if server.agent_network != PROXY and not server.agent_url:
         raise ConfigError("server.agent_url is necessary when server.agent_network is not 'proxy'")
     return server
+
+
+def _managed(raw: dict[str, Any]) -> ManagedConfig:
+    for key in ("image", "models_dir", "model_file", "port"):
+        _require(raw, "server.", key)
+    if "@sha256:" not in raw["image"]:
+        raise ConfigError("server.image must be pinned by digest (name@sha256:...)")
+    template = raw.get("chat_template")
+    if template is not None:
+        parts = PurePosixPath(template).parts
+        if parts[0] != "templates" or ".." in parts:
+            raise ConfigError(f"server.chat_template must be a path below templates/, not {template!r}")
+    draft = raw.get("draft", {})
+    _check_keys(draft, "server.draft.", {"model_file", "args"})
+    _check_args(raw.get("args", {}), "server.args")
+    _check_args(draft.get("args", {}), "server.draft.args")
+    values = {key: raw[key] for key in MANAGED_KEYS & raw.keys() & ManagedConfig.__dataclass_fields__.keys()}
+    values["models_dir"] = Path(raw["models_dir"]).expanduser()
+    values["draft"] = DraftConfig(draft["model_file"], draft.get("args", {})) if draft.get("model_file") else None
+    return ManagedConfig(**values)
+
+
+def _check_args(args: Args, prefix: str) -> None:
+    if not isinstance(args, dict):
+        raise ConfigError(f"{prefix} must be a table of flag = value")
+    reserved = sorted(HARNESS_FLAGS & args.keys())
+    if reserved:
+        raise ConfigError(f"{prefix}: the harness sets {', '.join(reserved)}")
 
 
 def _client(raw: dict[str, Any]) -> ClientConfig:
