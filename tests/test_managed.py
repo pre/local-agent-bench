@@ -1,4 +1,6 @@
 import hashlib
+import os
+import signal
 import json
 import socket
 from pathlib import Path
@@ -237,3 +239,24 @@ def test_failed_remove_is_reported(repo, http_server, capsys):
 
     err = capsys.readouterr().err
     assert "could not remove llm-eval-server" in err and "SIGSYS" in err
+
+
+def test_second_ctrl_c_does_not_stop_the_cleanup(repo, http_server, capsys):
+    podman = FakePodman()
+    real_call = podman.call
+
+    def call(args):
+        if args[0] == "stop":
+            os.kill(os.getpid(), signal.SIGINT)  # uv run gives the harness a second SIGINT
+        return real_call(args)
+
+    podman.call = call
+
+    with pytest.raises(KeyboardInterrupt):
+        with managed(repo, podman, url=http_server):
+            raise KeyboardInterrupt
+
+    assert NAME not in podman.containers
+    assert (repo / "run" / "server.log").exists()
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    assert f"stopping {NAME}" in capsys.readouterr().err

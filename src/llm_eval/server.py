@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import shutil
+import signal
 import socket
 import socketserver
 import sys
@@ -255,8 +256,8 @@ class ManagedServer(ExternalServer):
         return self
 
     def __exit__(self, *exc) -> None:
-        super().__exit__(*exc)
         self._remove()
+        super().__exit__(*exc)
 
     def describe(self) -> dict:
         return self.info
@@ -332,17 +333,26 @@ class ManagedServer(ExternalServer):
         return next((line for line in out.splitlines() if "build" in line), None)
 
     def _remove(self) -> None:
-        """Stop the container, save its full log as server.log in the run directory, remove it."""
+        """Stop the container, save its full log as server.log in the run directory, remove it.
+
+        SIGINT is ignored meanwhile (podman inherits this): `uv run` sends a second
+        SIGINT after Ctrl-C, and it must not stop the cleanup.
+        """
         if not self.started:
             return
         self.started = False
-        self.podman.call(["stop", "-t", str(STOP_TIMEOUT_S), MANAGED_CONTAINER])
-        _, log = self.podman.call(["logs", MANAGED_CONTAINER])
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-        (self.out_dir / "server.log").write_text(log.replace(self.api_key(), "<redacted>"))
-        code, out = self.podman.call(["rm", MANAGED_CONTAINER])
-        if code != 0:
-            print(f"llm-eval: could not remove {MANAGED_CONTAINER}: {out.strip()}", file=sys.stderr)
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            print(f"llm-eval: stopping {MANAGED_CONTAINER}", file=sys.stderr, flush=True)
+            self.podman.call(["stop", "-t", str(STOP_TIMEOUT_S), MANAGED_CONTAINER])
+            _, log = self.podman.call(["logs", MANAGED_CONTAINER])
+            self.out_dir.mkdir(parents=True, exist_ok=True)
+            (self.out_dir / "server.log").write_text(log.replace(self.api_key(), "<redacted>"))
+            code, out = self.podman.call(["rm", MANAGED_CONTAINER])
+            if code != 0:
+                print(f"llm-eval: could not remove {MANAGED_CONTAINER}: {out.strip()}", file=sys.stderr)
+        finally:
+            signal.signal(signal.SIGINT, previous)
 
 
 def open_server(cfg: ServerConfig, scratch: Path, podman=None, root: Path | None = None,
