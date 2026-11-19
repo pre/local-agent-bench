@@ -301,7 +301,11 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
-    print(compare_runs(*_load_runs([args.run_a, args.run_b])), end="")
+    runs = _load_runs([args.run_a, args.run_b])
+    for run in runs:
+        if not run.results:
+            raise ConfigError(f"{run.dir}: no trial results (no <task>-r<rep>/result.json), nothing to compare")
+    print(compare_runs(*runs), end="")
     return 0
 
 

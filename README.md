@@ -484,6 +484,8 @@ The "Noise" part tells if the difference is real:
 
 The result is "inside the noise" when the intervals overlap or p is 0.05 or more.
 
+When a directory has no trial results (for example an empty directory, or a run that has only `run.json`), `compare` writes an error and the exit code is 2.
+
 ## Probe
 
 ```sh

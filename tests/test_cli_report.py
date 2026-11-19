@@ -43,6 +43,21 @@ def test_compare(runs, capsys):
     assert "# Comparison" in capsys.readouterr().out
 
 
+def test_compare_of_an_empty_directory(runs, tmp_path, capsys):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    assert cli.main(["compare", str(runs[0]), str(empty)]) == 2
+    assert f"{empty}: no trial results" in capsys.readouterr().err
+
+
+def test_compare_of_a_run_without_results(runs, tmp_path, capsys):
+    started = write_run(tmp_path / "started", [], tasks=["t1"])
+
+    assert cli.main(["compare", str(started), str(runs[1])]) == 2
+    assert f"{started}: no trial results" in capsys.readouterr().err
+
+
 @pytest.fixture
 def fake():
     server = FakeLlama()
