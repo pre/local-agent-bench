@@ -1,0 +1,52 @@
+# GLM-5.3 Flash (320.8B-A18B), UD-IQ2_XXS of unsloth (4 parts), revision a38483c8.
+# Download: just download-model glm-5.3-flash. License: MIT.
+# Part 4 (2.7 GB) holds only blk.45, the MTP layer. llama-server loads it only with MTP,
+# and this configuration has no MTP.
+# Expected GTT: about 93 to 95 GiB (estimate: 92.3 GiB weights without the MTP layer,
+# KV q8_0 and compute buffers about 1 to 2.5 GiB). The GTT limit of this machine is
+# 110 GiB, and the desktop uses 2 to 5 GiB. So the server starts only when GTT used is
+# at most 6000 MiB: no other model may be loaded.
+# Quality: published top-1 agreement 76 %. Reports of reasoning that collapses in long sessions.
+#
+# Chat template: the embedded template. A system message at each position renders as
+# <|system|>. Reasoning effort: the template accepts low and high, and uses max for
+# each other value.
+name = "glm-53-flash"
+
+[server]
+mode = "managed"
+image = "docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:a01d3ea5b7cbc64e2969be2a833fd5d665fb888d73447de52a54375a7a2fcb76"
+models_dir = "~/models/glm-5.3-flash"
+model_file = "UD-IQ2_XXS/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf"
+model = "glm-5.3-flash"
+context_tokens = 131072
+api_key_file = "~/.config/llama-server/api-key"
+port = 8090
+gtt_max_used_mib = 6000
+
+[server.args]
+-ngl = "all"
+-fa = "on"
+-lm = "none"                   # resident load, recommended on Strix Halo (kyuz0)
+-np = 1
+-ub = 512
+-ctk = "q8_0"
+-ctv = "q8_0"
+-cram = 0                      # no prompt cache in host RAM
+-ctxcp = 4                     # each context checkpoint is about 146 MiB, the default is 32
+--jinja = true
+--reasoning-effort = "high"    # only for a request without an effort, see [client.env]
+--temp = 1.0                   # the evaluations of the card: temperature 1.0, top_p 0.95
+--top-p = 0.95
+
+[client]
+image = "localhost/llm-eval-agent:latest"
+config_dir = "client-config"
+
+[client.env]
+CLAUDE_CODE_ATTRIBUTION_HEADER = "0"
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"
+# Claude Code sends output_config.effort in each request, and llama-server gives it
+# to the template. The request value replaces --reasoning-effort.
+CLAUDE_CODE_EFFORT_LEVEL = "high"

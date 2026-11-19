@@ -1,5 +1,6 @@
 """The configuration files in configs/."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -93,3 +94,69 @@ def test_effort_variants_set_the_effort_of_claude_code():
     # replaces the reasoning_effort of --chat-template-kwargs.
     assert load_config(CONFIGS / "qwen38-effort-medium.toml").client.env["CLAUDE_CODE_EFFORT_LEVEL"] == "medium"
     assert load_config(CONFIGS / "qwen38-effort-low.toml").client.env["CLAUDE_CODE_EFFORT_LEVEL"] == "low"
+
+
+SERVER_FLAGS = "--host 0.0.0.0 --port 8080 --api-key-file /run/api-key -c 131072"
+MODELS = {
+    "gpt-oss-120b.toml": (
+        "-m /models/gpt-oss-120b-F16.gguf --alias gpt-oss-120b"
+        " -ngl all -fa on -lm none -np 1 -b 2048 -ub 2048 --jinja --reasoning-effort high --temp 1.0 --top-p 1.0"),
+    "qwen3-coder-next.toml": (
+        "-m /models/UD-Q8_K_XL/Qwen3-Coder-Next-UD-Q8_K_XL-00001-of-00003.gguf --alias qwen3-coder-next"
+        " -ngl all -fa on -lm none -np 1 --jinja --temp 1.0 --top-p 0.95 --top-k 40 --min-p 0.01"),
+    "qwen38-27b.toml": (
+        "-m /models/Qwen3.8-27B-Q8_0.gguf --alias qwen3.8-27b"
+        " -ngl all -fa on -lm none -np 1 --jinja --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0"
+        " --spec-type draft-mtp --spec-draft-n-max 2 --chat-template-file /run/chat-template.jinja"),
+    "glm-53-flash.toml": (
+        "-m /models/UD-IQ2_XXS/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf --alias glm-5.3-flash"
+        " -ngl all -fa on -lm none -np 1 -ub 512 -ctk q8_0 -ctv q8_0 -cram 0 -ctxcp 4"
+        " --jinja --reasoning-effort high --temp 1.0 --top-p 0.95"),
+}
+
+
+@pytest.mark.parametrize("name, flags", MODELS.items())
+def test_model_configuration_has_the_flags_of_the_research(name, flags):
+    config = load_config(CONFIGS / name)
+
+    assert pairs(llama_server_args(config.server)) == pairs(f"{SERVER_FLAGS} {flags}".split())
+    assert config.name == name.removesuffix(".toml")
+    assert config.server.managed.port == 8090
+    assert config.server.managed.image == load_config(CONFIGS / "qwen38-base.toml").server.managed.image
+    assert config.server.managed.draft is None
+
+
+def test_model_directories_follow_the_download_list():
+    listed = {line.split("\t")[0] for line in (ROOT / "download" / "models.tsv").read_text().splitlines()
+              if not line.startswith("#")}
+    dirs = {load_config(CONFIGS / name).server.managed.models_dir.name for name in MODELS}
+
+    assert dirs == listed
+
+
+def test_only_glm_needs_a_clean_gpu():
+    limits = {name: load_config(CONFIGS / name).server.managed.gtt_max_used_mib for name in MODELS}
+
+    assert limits.pop("glm-53-flash.toml") == 6000
+    assert set(limits.values()) == {12288}
+
+
+def test_qwen38_27b_uses_the_patched_template():
+    assert load_config(CONFIGS / "qwen38-27b.toml").server.managed.chat_template == "templates/qwen38-flash-next.jinja"
+
+
+def help_flags() -> set[str]:
+    """The flags of `llama-server --help` of the pinned image (build 12531). The
+    flag names are in the first 40 characters of a line."""
+    text = (Path(__file__).parent / "llama-server-help-build12531.txt").read_text()
+    return {flag for line in text.splitlines() if line.startswith("-")
+            for flag in re.findall(r"--?[A-Za-z][\w-]*", line[:40])}
+
+
+@pytest.mark.parametrize("path", sorted(CONFIGS.glob("*.toml")), ids=lambda p: p.name)
+def test_each_configuration_loads_and_uses_known_flags(path):
+    config = load_config(path)
+
+    if config.server.managed:
+        flags = {arg for arg in llama_server_args(config.server) if re.fullmatch(r"--?[A-Za-z][\w-]*", arg)}
+        assert flags - help_flags() == set()

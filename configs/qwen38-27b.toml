@@ -1,0 +1,48 @@
+# Qwen3.8-27B (dense), Q8_0 of unsloth, revision 4af51b35. The file has the MTP layer
+# (blk.64.nextn tensors), so speculative decoding needs no draft file.
+# Download: just download-model qwen3.8-27b. License: Apache 2.0.
+# Expected GTT: about 37 GiB (estimate: 27.1 GiB weights, 8.0 GiB KV f16, MTP and compute buffers).
+#
+# Chat template: the patched template of Flash-Next. The embedded template is the same
+# except one line: it raises "System message must be at the beginning." for the system
+# message that Claude Code sends after the first user message.
+# Reasoning effort: the template accepts xhigh (the default), medium and low, and maps
+# high and max to xhigh, minimal to low.
+name = "qwen38-27b"
+
+[server]
+mode = "managed"
+image = "docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:a01d3ea5b7cbc64e2969be2a833fd5d665fb888d73447de52a54375a7a2fcb76"
+models_dir = "~/models/qwen3.8-27b"
+model_file = "Qwen3.8-27B-Q8_0.gguf"
+model = "qwen3.8-27b"
+context_tokens = 131072
+chat_template = "templates/qwen38-flash-next.jinja"
+api_key_file = "~/.config/llama-server/api-key"
+port = 8090
+gtt_max_used_mib = 12288
+
+[server.args]
+-ngl = "all"
+-fa = "on"
+-lm = "none"                   # resident load, recommended on Strix Halo (kyuz0)
+-np = 1
+--jinja = true
+--temp = 1.0                   # model card, thinking mode
+--top-p = 0.95
+--top-k = 20
+--min-p = 0.0
+--spec-type = "draft-mtp"      # the MTP layer in the model file, no -md
+--spec-draft-n-max = 2
+
+[client]
+image = "localhost/llm-eval-agent:latest"
+config_dir = "client-config"
+
+[client.env]
+CLAUDE_CODE_ATTRIBUTION_HEADER = "0"
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"
+# Claude Code sends output_config.effort in each request, and llama-server gives it
+# to the template. "high" becomes xhigh in the template.
+CLAUDE_CODE_EFFORT_LEVEL = "high"

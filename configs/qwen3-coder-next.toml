@@ -1,0 +1,40 @@
+# Qwen3-Coder-Next (80B-A3B), UD-Q8_K_XL of unsloth (3 parts), revision ce09c67b.
+# Download: just download-model qwen3-coder-next. License: Apache 2.0, from the card
+# metadata only (the LICENSE link of the card gives HTTP 404).
+# Expected GTT: about 85 to 87 GiB (estimate: 80.4 GiB weights, 3.0 GiB KV f16, compute buffers).
+#
+# Chat template: the embedded template. A system message after the first message becomes
+# a system turn, with no error. No thinking mode, so no reasoning flags: the effort that
+# Claude Code sends has no effect on this template.
+name = "qwen3-coder-next"
+
+[server]
+mode = "managed"
+image = "docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:a01d3ea5b7cbc64e2969be2a833fd5d665fb888d73447de52a54375a7a2fcb76"
+models_dir = "~/models/qwen3-coder-next"
+model_file = "UD-Q8_K_XL/Qwen3-Coder-Next-UD-Q8_K_XL-00001-of-00003.gguf"
+model = "qwen3-coder-next"
+context_tokens = 131072
+api_key_file = "~/.config/llama-server/api-key"
+port = 8090
+gtt_max_used_mib = 12288
+
+[server.args]
+-ngl = "all"
+-fa = "on"
+-lm = "none"                   # resident load, recommended on Strix Halo (kyuz0)
+-np = 1
+--jinja = true
+--temp = 1.0                   # model card: temperature 1.0, top_p 0.95, top_k 40
+--top-p = 0.95
+--top-k = 40
+--min-p = 0.01                 # unsloth
+
+[client]
+image = "localhost/llm-eval-agent:latest"
+config_dir = "client-config"
+
+[client.env]
+CLAUDE_CODE_ATTRIBUTION_HEADER = "0"
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"

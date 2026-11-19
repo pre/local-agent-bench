@@ -1,0 +1,45 @@
+# gpt-oss-120b, F16 file of unsloth (MXFP4 experts, the other tensors 16-bit), revision ff1a82da.
+# Download: just download-model gpt-oss-120b. License: Apache 2.0.
+# Expected GTT: about 68 GiB (estimate: 60.9 GiB weights, 4.5 GiB KV f16, compute buffers).
+#
+# Chat template: the embedded template (no chat_template key). It drops each system message
+# that is not the first message, with no error. Claude Code 2.1.328 sends its environment
+# block (working directory, platform, agent types, skills) as a system message after the
+# first user message, so this model never sees that block.
+# The template writes "Reasoning: <effort>" for each effort value, with no error.
+name = "gpt-oss-120b"
+
+[server]
+mode = "managed"
+image = "docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:a01d3ea5b7cbc64e2969be2a833fd5d665fb888d73447de52a54375a7a2fcb76"
+models_dir = "~/models/gpt-oss-120b"
+model_file = "gpt-oss-120b-F16.gguf"
+model = "gpt-oss-120b"
+context_tokens = 131072
+api_key_file = "~/.config/llama-server/api-key"
+port = 8090
+gtt_max_used_mib = 12288
+
+[server.args]
+-ngl = "all"
+-fa = "on"
+-lm = "none"                   # resident load, recommended on Strix Halo (kyuz0)
+-np = 1
+-b = 2048
+-ub = 2048
+--jinja = true
+--reasoning-effort = "high"    # only for a request without an effort, see [client.env]
+--temp = 1.0                   # OpenAI: temperature 1.0, top_p 1.0
+--top-p = 1.0
+
+[client]
+image = "localhost/llm-eval-agent:latest"
+config_dir = "client-config"
+
+[client.env]
+CLAUDE_CODE_ATTRIBUTION_HEADER = "0"
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"
+# Claude Code sends output_config.effort in each request, and llama-server gives it
+# to the template. The request value replaces --reasoning-effort.
+CLAUDE_CODE_EFFORT_LEVEL = "high"
