@@ -56,7 +56,8 @@ def test_load_run_without_run_json(tmp_path):
     run = load_run(tmp_path)
 
     assert run.results == []
-    assert run.partial
+    assert not run.partial
+    assert "no run.json, 0 trials" in render_report([run])
 
 
 def test_harness_errors_are_not_in_pass_rate_or_score(tmp_path):

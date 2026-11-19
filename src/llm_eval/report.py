@@ -53,7 +53,8 @@ class Run:
 
     @property
     def partial(self) -> bool:
-        return not self.info.get("finished_at") or len(self.results) < (self.expected or 0)
+        """True when run.json exists and the run is not finished or has missing results."""
+        return bool(self.info) and (not self.info.get("finished_at") or len(self.results) < (self.expected or 0))
 
 
 def load_run(run_dir: Path) -> Run:
@@ -202,9 +203,11 @@ def _runs_section(runs: list[Run]) -> list[str]:
     for run in runs:
         found = f"{len(run.results)} of {_trials(run.expected)}" if run.expected else _trials(len(run.results))
         state = "PARTIAL, " if run.partial else ""
-        name = run.info.get("config", {}).get("name", "no run.json")
-        lines.append(f"- `{run.id}` ({name}): {state}{found}, started {run.info.get('started_at', 'n/a')},"
-                     f" finished {run.info.get('finished_at', 'no')}")
+        if not run.info:
+            lines.append(f"- `{run.id}`: no run.json, {found}")
+            continue
+        lines.append(f"- `{run.id}` ({run.info['config']['name']}): {state}{found}, started"
+                     f" {run.info.get('started_at')}, finished {run.info.get('finished_at', 'no')}")
     if any(run.partial for run in runs):
         lines += ["", "A PARTIAL run is not finished or has fewer results than tasks times repetitions."
                   " Its values can change."]

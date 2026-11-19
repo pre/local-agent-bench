@@ -86,6 +86,7 @@ class State:
         self.busy_polls = 0  # /slots reports a busy slot this many times
         self.slot_params: dict = {"temperature": 1.0, "top_p": 0.95, "top_k": 20}
         self.fail: dict[str, tuple[int, str]] = {}  # path -> (status, body)
+        self.fail_type = "text/plain"
 
 
 def make_handler(state: State):
@@ -135,7 +136,7 @@ def make_handler(state: State):
                 return
             if self.path in state.fail:
                 status, text = state.fail[self.path]
-                self._send(status, text.encode(), "text/plain")
+                self._send(status, text.encode(), state.fail_type)
             elif self.path == "/tokenize":
                 self._send(200, {"tokens": [ord(c) for c in body["content"]]})
             elif self.path == "/detokenize":

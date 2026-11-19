@@ -207,3 +207,14 @@ def test_probe_server_writes_files_without_the_key(fake, tmp_path):
         assert KEY not in path.read_text()
     assert any("1000" in line for line in lines)
     assert any("system_in_middle" in line and "FAIL" in line for line in lines)
+
+
+def test_client_event_that_is_not_json(fake, client):
+    fake.state.fail["/v1/messages"] = (200, "data: {not json\n\n")
+    fake.state.fail_type = "text/event-stream"
+
+    reply = client.request("POST", "/v1/messages", {"stream": True})
+
+    assert reply.status == 200
+    assert not reply.ok
+    assert reply.error.startswith("JSONDecodeError")

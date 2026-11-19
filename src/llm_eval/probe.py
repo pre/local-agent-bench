@@ -62,7 +62,7 @@ class Reply:
 
     @property
     def ok(self) -> bool:
-        return self.status == 200
+        return self.status == 200 and self.error is None
 
     def error_text(self) -> str:
         return self.error or f"HTTP {self.status}: {self.text[:300]}"
@@ -92,7 +92,7 @@ class Client:
                     reply.text = response.read().decode(errors="replace")
         except urllib.error.HTTPError as e:
             reply.status, reply.text = e.code, e.read().decode(errors="replace")
-        except OSError as e:
+        except (OSError, ValueError) as e:  # ValueError: an event that is not JSON
             reply.error = f"{type(e).__name__}: {e}"
         reply.seconds = time.monotonic() - start
         try:
