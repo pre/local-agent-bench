@@ -57,3 +57,32 @@ compare run_a run_b:
 # Send the speed and protocol probes to the server of a configuration
 probe config *args:
     uv run llm-eval probe --config {{config}} {{args}}
+
+models_root := home_directory() / "models"
+alpine := "docker.io/library/alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+
+# Download models of download/models.tsv to ~/models/<name>/ in a detached container: just download-model gpt-oss-120b
+[script("bash")]
+download-model +names:
+    set -euo pipefail
+    mounts=()
+    for name in {{names}}; do
+      cut -f1 download/models.tsv | grep -qxF "$name" || { echo "unknown model: $name"; exit 1; }
+      mkdir -p "{{models_root}}/$name"
+      mounts+=(-v "{{models_root}}/$name:/models/$name")
+    done
+    podman run -d --replace --name model-download -e RATE="${RATE:-28M}" \
+      -e SSL_CERT_FILE=/run/host-ca.crt \
+      -v {{ca_file}}:/run/host-ca.crt:ro -v {{ca_file}}:/etc/ssl/certs/ca-certificates.crt:ro \
+      -v "{{justfile_directory()}}/download/models.tsv:/run/models.tsv:ro" \
+      -v "{{justfile_directory()}}/download/download.sh:/run/download.sh:ro" \
+      "${mounts[@]}" {{alpine}} sh /run/download.sh {{names}}
+    echo "Progress: podman logs -f model-download"
+
+# Check the files of downloaded models with SHA-256, at low CPU and I/O priority
+[script("bash")]
+verify-model +names:
+    set -euo pipefail
+    for name in {{names}}; do
+      (cd "{{models_root}}/$name" && cut -f1 expected-sha256.tsv | nice -n 19 ionice -c 3 sha256sum -c -)
+    done
