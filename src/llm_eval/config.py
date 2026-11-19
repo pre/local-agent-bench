@@ -51,7 +51,7 @@ class Config:
 
 
 def load_config(path: Path) -> Config:
-    path = Path(path)
+    path = Path(path).resolve()
     raw = _read_merged(path)
     _check_keys(raw, "", {"name", "server", "client"})
     return Config(
