@@ -13,6 +13,8 @@ just run configs/qwen38-external.toml --task go-bugfix
 just run configs/qwen38-external.toml --reps 3 --out ~/daybook-evidence/local-llm/eval/my-run
 just run configs/qwen38-base.toml --tier quick  # the harness starts and stops the server
 just run configs/qwen38-base.toml --config configs/qwen38-kv-f16.toml --tier full
+just run configs/qwen38-27b.toml --tier quick --probe all  # probes first, no trials on a broken template
+just download-model gpt-oss-120b                # download model files (see "Models")
 just resume ~/daybook-evidence/local-llm/eval/<run-id>
 just test                                       # unit tests with coverage
 ```
@@ -29,6 +31,7 @@ The justfile sets `TMPDIR` (default `~/tmp`) and the CA variables (`SSL_CERT_FIL
 | `client-config/` | The Claude Code configuration directory of a trial. No `CLAUDE.md`, no plugins, no MCP servers. Each trial gets a new copy |
 | `configs/` | One TOML file for each configuration |
 | `templates/` | Chat templates that a managed configuration can name |
+| `download/` | The list of model files (`models.tsv`) and the download script (see "Models") |
 | `tasks/<task-id>/` | One task (see "Task contract") |
 | `src/llm_eval/` | The orchestrator. Standard library only |
 | `tests/` | Unit tests with fakes for podman and the server |
@@ -90,6 +93,8 @@ model_file = "MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf"  # below models_dir. "" mean
 args = { --spec-type = "draft-mtp", --spec-draft-n-max = 3 }
 ```
 
+A model file that has its MTP layer inside (for example Qwen3.8-27B of unsloth) needs no draft file. Then put the flags in `[server.args]`: `--spec-type = "draft-mtp"`, `--spec-draft-n-max = 2`. `[server.draft]` is only for a separate draft file: without `model_file` the harness ignores its `args`.
+
 The harness sets these flags itself, and they are not permitted in `args`: `--host 0.0.0.0 --port 8080 --api-key-file /run/api-key -m /models/<model_file> --alias <model> -c <context_tokens>`, `--chat-template-file /run/chat-template.jinja` (with `chat_template`) and `-md /models/<draft model_file>` (with a draft model). `args` is a table and not a list, so a variant file can change one flag.
 
 ### Base and variants
@@ -111,8 +116,8 @@ The configurations of the first matrix:
 | File | Change from `qwen38-base.toml` |
 |---|---|
 | `qwen38-base.toml` | Managed. The settings of the server `llama-qwen38` (UD-Q4_K_XL, MTP head, context 131072, KV cache q8_0, temperature 1.0, reasoning effort xhigh of the template), port 8090 |
-| `qwen38-effort-medium.toml` | `--chat-template-kwargs '{"reasoning_effort":"medium"}'` |
-| `qwen38-effort-low.toml` | `--chat-template-kwargs '{"reasoning_effort":"low"}'` |
+| `qwen38-effort-medium.toml` | `CLAUDE_CODE_EFFORT_LEVEL=medium` (and the server value `--chat-template-kwargs '{"reasoning_effort":"medium"}'`) |
+| `qwen38-effort-low.toml` | `CLAUDE_CODE_EFFORT_LEVEL=low` (and the server value `--chat-template-kwargs '{"reasoning_effort":"low"}'`) |
 | `qwen38-iq4-xs.toml` | Quant UD-IQ4_XS |
 | `qwen38-kv-f16.toml` | `-ctk f16 -ctv f16` |
 | `qwen38-ctx-65536.toml` | `-c 65536`, and Claude Code gets the same value |
@@ -120,7 +125,54 @@ The configurations of the first matrix:
 | `qwen38-temp-0.6.toml` | `--temp 0.6` |
 | `qwen38-external.toml` | External: the server `llama-qwen38` that runs already |
 
-The chat template accepts only the reasoning effort values xhigh (the default, also for "high"), medium and low. Another value gives an error for each request. With xhigh and low the template adds one instruction line to the system prompt, with medium it adds no line.
+The chat template accepts the reasoning effort values xhigh (the default), medium and low. It uses xhigh for "high" and "max", and low for "minimal". Another value gives HTTP 400 for each request. With xhigh and low the template adds one instruction line to the system prompt, with medium it adds no line.
+
+### What Claude Code sends
+
+Recorded with Claude Code 2.1.328 in the agent container, with the environment of a trial, against a recording server (2026-11-19). The first request of a trial:
+
+| Field | Value |
+|---|---|
+| `model` | the `model` of the configuration |
+| `max_tokens` | 32000 |
+| `temperature`, `top_p`, `top_k` | not sent |
+| `thinking` | `{"type": "adaptive"}`. Not sent with `MAX_THINKING_TOKENS=0` or `CLAUDE_CODE_DISABLE_THINKING=1` |
+| `output_config` | `{"effort": "high"}`. `CLAUDE_CODE_EFFORT_LEVEL` changes it to `low`, `medium`, `high`, `xhigh` or `max`. Another value (for example `minimal`) gives `high` |
+| `stream` | true |
+| Tools | 21 |
+| `system` | 2 blocks, 7376 characters |
+| `messages` | a user message, then a system message (8606 characters: environment, agent types, skills) |
+| `anthropic-beta` | `claude-code-20250219,interleaved-thinking-2025-05-14,effort-2025-11-24` |
+
+Consequences:
+
+- llama-server (since PR 32321) gives `output_config.effort` to the chat template as `reasoning_effort`. The request value replaces `--reasoning-effort` and the `reasoning_effort` of `--chat-template-kwargs`. Thus `CLAUDE_CODE_EFFORT_LEVEL` in `[client.env]` controls the effort. The server value applies only to a request without an effort, for example the protocol probe.
+- The server flags `--temp`, `--top-p`, `--top-k` and `--min-p` control the sampling, because Claude Code sends no sampling values.
+- The system message after the first user message must be supported by the chat template. The original Qwen3.8 template rejects it, and the gpt-oss template drops it with no error.
+
+## Models
+
+| File | Model, quant | Files | Expected GTT | License | Known caveat |
+|---|---|---|---|---|---|
+| `qwen38-base.toml` | Qwen3.8-Flash-Next, UD-Q4_K_XL, MTP head | 4 parts and a draft file | 88017 MiB GTT used with the desktop (measured) | Qwen Community License | Needs the patched chat template and `-lzm on` |
+| `gpt-oss-120b.toml` | gpt-oss-120b, F16 of unsloth (MXFP4 experts) | 1 file, 65.4 GB | about 68 GiB (estimate) | Apache 2.0 | The embedded template drops each system message after the first message, thus also the environment block of Claude Code |
+| `qwen3-coder-next.toml` | Qwen3-Coder-Next 80B-A3B, UD-Q8_K_XL | 3 parts, 86.3 GB | about 85 to 87 GiB (estimate) | Apache 2.0, card metadata only (the LICENSE link gives HTTP 404) | No thinking mode |
+| `qwen38-27b.toml` | Qwen3.8-27B dense, Q8_0, MTP layer inside | 1 file, 29.0 GB | about 37 GiB (estimate) | Apache 2.0 | Needs the patched chat template of Flash-Next. MTP with no draft file |
+| `glm-53-flash.toml` | GLM-5.3 Flash 320.8B-A18B, UD-IQ2_XXS, no MTP | 4 parts, 101.8 GB | about 93 to 95 GiB (estimate) | MIT | At the memory limit: starts only when GTT used is 6000 MiB or less. Published top-1 agreement 76 %. Reports of reasoning that collapses in long sessions |
+
+The four new configurations use `-lm none` (resident load, recommended on Strix Halo), port 8090, context 131072 and the image of `qwen38-base.toml`. The comments of each file give the source of each value. A unit test checks that each flag of each configuration is in the help text of llama-server build 12531 (`tests/llama-server-help-build12531.txt`).
+
+### Download
+
+```sh
+just download-model gpt-oss-120b qwen3-coder-next   # detached container "model-download"
+podman logs -f model-download                       # progress, "VERIFIED <model>" or "FAILED <model>"
+just verify-model gpt-oss-120b                      # SHA-256 check on the host
+```
+
+`download/models.tsv` has one line for each file: model (the directory below `~/models`), repository, revision, date of the revision, path, size and SHA-256 (from the tree API of Hugging Face). The URL has the pinned revision, not `main`.
+
+`download/download.sh` runs in an Alpine container (pinned by digest) with the CA bundle of the host. It does the models one after the other. For each model it writes `expected-sha256.tsv` and `source.txt` in the model directory, downloads the missing files with aria2 (16 connections for each file, `.part` files, a second run continues them), and checks each file with SHA-256 at low CPU and I/O priority. A file that does not match is downloaded again once. `RATE` (default `28M`, aria2 unit MiB/s) is the limit for all connections together.
 
 ## Cloud reference models
 
@@ -406,6 +458,14 @@ just probe configs/qwen38-external.toml                       # all probes, all 
 just probe configs/qwen38-external.toml --kind protocol
 just probe configs/qwen38-external.toml --kind speed --target 1000 --target 23000
 ```
+
+### Probes in a run
+
+`run --probe speed|protocol|all` sends the probes to the server of each run after the server is healthy and before the first trial. The files go to `<run-dir>/probes/`, so `report <run-dir>` shows them. The speed probe of a run uses the targets 1000 and 23000 tokens. `--probe-target N` (can repeat) gives other targets.
+
+With `protocol` or `all`, the protocol probe runs first, and it is a gate. When the case `plain`, `tool_call` or `tool_round_trip` fails, the harness does not run the speed probe and the trials of that configuration. It prints the failed cases, writes the reason to `run.json` (key `probe_gate`: `failed_cases`, `reason`, `at`) and to `run.log`, stops the server and continues with the next configuration. The exit code is then 1. The other cases do not stop a run.
+
+### Probe command
 
 `probe` sends requests from the host directly to the server URL of the configuration, with the key of `api_key_file`. It does not use Claude Code or a container. The results go to `<out>/probes/speed.json` and `<out>/probes/protocol.json`. The default `<out>` is `~/daybook-evidence/local-llm/eval/probe-<UTC time>-<configuration>/`. `report <out>` shows the probe results.
 
