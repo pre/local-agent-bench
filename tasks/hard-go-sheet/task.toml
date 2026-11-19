@@ -1,0 +1,7 @@
+id = "hard-go-sheet"
+title = "Make the spreadsheet engine update each cell once"
+category = "feature"
+language = "go"
+quick = false
+timeout_s = 7200
+max_turns = 100
