@@ -1,0 +1,8 @@
+[package]
+name = "keepr"
+version = "0.1.0"
+edition = "2021"
+description = "Decides which backup snapshots to keep"
+publish = false
+
+[dependencies]

@@ -1,0 +1,10 @@
+# Snapshots of two hosts
+4d1e 2026-03-14T23:30:00Z host=alpha paths=/etc,/home tags=nightly
+4c02 2026-03-14T12:00:00Z host=alpha paths=/etc,/home
+4b77 2026-03-13T23:30:00Z host=alpha paths=/etc,/home tags=nightly
+4a10 2026-03-09T23:30:00Z host=alpha paths=/home,/etc tags=nightly
+49f3 2026-03-01T23:30:00Z host=alpha paths=/etc,/home tags=nightly,pin
+3e0c 2026-02-14T23:30:00Z host=alpha paths=/etc,/home tags=nightly
+2a7b 2025-12-31T23:30:00Z host=alpha paths=/etc,/home tags=nightly
+9f00 2026-03-14T08:00:00+01:00 host=beta paths=/srv
+9e11 2026-03-12T08:00:00+01:00 host=beta paths=/srv
