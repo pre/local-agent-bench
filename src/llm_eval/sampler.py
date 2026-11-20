@@ -9,6 +9,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .stop import start_thread
+
 GTT_PATTERN = "/sys/class/drm/card*/device/mem_info_gtt_used"
 GTT_TOTAL_PATTERN = "/sys/class/drm/card*/device/mem_info_gtt_total"
 COLUMNS = ["time", "gtt_used_mib", "mem_available_mib", "swap_free_mib", "psi_some_avg10", "psi_full_avg10"]
@@ -64,7 +66,7 @@ class MemorySampler:
         self.writer.writerow(COLUMNS)
         self.stopping = threading.Event()
         self.thread = threading.Thread(target=self._loop, daemon=True)
-        self.thread.start()
+        start_thread(self.thread)
 
     def stop(self) -> dict:
         self.stopping.set()

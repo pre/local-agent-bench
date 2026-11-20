@@ -18,6 +18,7 @@ from .results import write_json
 from .sampler import MemorySampler
 from .selfcheck import selfcheck_task
 from .server import ServerError, open_server
+from .stop import notice, stop_on_signals
 from .task import Task, TaskError, find_tasks
 from .trial import RunContext, execute_run, log, make_run_id, start_run, utc_now
 
@@ -204,7 +205,7 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
         print(f"llm-eval: {plan.config.name}: {e}", file=sys.stderr)
         return False
     except KeyboardInterrupt:
-        print(f"llm-eval: interrupted. To continue: llm-eval run --resume {out_dir}", file=sys.stderr)
+        notice(out_dir, f"llm-eval: interrupted. To continue: llm-eval run --resume {out_dir}")
         raise
     passed = sum(r["passed"] for r in results)
     print(f"results: {out_dir}  passed {passed}/{len(results)}")
@@ -269,17 +270,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     plans = plan_runs(args)
     podman = Podman()
     scratch = Path(tempfile.mkdtemp(prefix="llm-eval-run-"))
-    try:
-        if not selfcheck_plans(podman, plans, scratch / "selfcheck"):
-            print("llm-eval: a task does not pass the selfcheck, no trials ran", file=sys.stderr)
-            return 1
-        ok = True
-        for plan in plans:
-            ok = run_plan(plan, podman, scratch, args) and ok
-    except KeyboardInterrupt:
-        return 130
-    finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+    with stop_on_signals():
+        try:
+            if not selfcheck_plans(podman, plans, scratch / "selfcheck"):
+                print("llm-eval: a task does not pass the selfcheck, no trials ran", file=sys.stderr)
+                return 1
+            ok = True
+            for plan in plans:
+                ok = run_plan(plan, podman, scratch, args) and ok
+        except KeyboardInterrupt:
+            return 130
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
     return 0 if ok else 1
 
 

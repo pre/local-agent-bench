@@ -10,11 +10,9 @@ import hashlib
 import json
 import re
 import shutil
-import signal
 import socket
 import socketserver
 import ssl
-import sys
 import threading
 import time
 import urllib.error
@@ -27,6 +25,7 @@ from urllib.parse import urlsplit
 from .config import MANAGED_CONTAINER, PROXY, Args, ServerConfig
 from .podman import Mount
 from .sampler import read_gtt_total_mib, read_gtt_used_mib
+from .stop import ignore_stop_signals, notice, start_thread
 
 RELAY_DIR = "/run/llm-eval"
 PROXY_BASE_URL = "http://127.0.0.1:8080"
@@ -73,7 +72,7 @@ class UnixRelay:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     def start(self) -> None:
-        self.thread.start()
+        start_thread(self.thread)  # the threads of the connections get its signal mask
 
     def stop(self) -> None:
         self.server.shutdown()
@@ -307,7 +306,7 @@ class ManagedServer(ExternalServer):
     """A llama-server container (llm-eval-server) that the harness starts and removes.
 
     The harness removes only a container that has its label. The container also
-    stops when the body of the with statement raises, Ctrl-C included.
+    stops when the body of the with statement raises, a stop signal included (see stop.py).
     """
 
     def __init__(self, cfg: ServerConfig, scratch: Path, podman, root: Path, out_dir: Path,
@@ -459,25 +458,20 @@ class ManagedServer(ExternalServer):
 
     def _remove(self) -> None:
         """Stop the container, save its full log as server.log in the run directory, remove it.
-
-        SIGINT is ignored meanwhile (podman inherits this): `uv run` sends a second
-        SIGINT after Ctrl-C, and it must not stop the cleanup.
-        """
+        A stop signal does not interrupt this, and a closed stderr does not stop it."""
         if not self.started:
             return
         self.started = False
-        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
-        try:
-            print(f"llm-eval: stopping {MANAGED_CONTAINER}", file=sys.stderr, flush=True)
+        with ignore_stop_signals():
+            notice(self.out_dir, f"llm-eval: stopping {MANAGED_CONTAINER}")
             self.podman.call(["stop", "-t", str(STOP_TIMEOUT_S), MANAGED_CONTAINER])
             _, log = self.podman.call(["logs", MANAGED_CONTAINER])
-            self.out_dir.mkdir(parents=True, exist_ok=True)
             (self.out_dir / "server.log").write_text(log.replace(self.api_key(), "<redacted>"))
             code, out = self.podman.call(["rm", MANAGED_CONTAINER])
-            if code != 0:
-                print(f"llm-eval: could not remove {MANAGED_CONTAINER}: {out.strip()}", file=sys.stderr)
-        finally:
-            signal.signal(signal.SIGINT, previous)
+            if code == 0:
+                notice(self.out_dir, f"llm-eval: {MANAGED_CONTAINER} is removed, its log is server.log")
+            else:
+                notice(self.out_dir, f"llm-eval: could not remove {MANAGED_CONTAINER}: {out.strip()}")
 
 
 def open_server(cfg: ServerConfig, scratch: Path, podman=None, root: Path | None = None,

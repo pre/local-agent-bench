@@ -1,6 +1,13 @@
+import json
 import os
+import signal
 import stat
+import sys
+import threading
+import time
 from pathlib import Path
+
+import pytest
 
 from llm_eval.podman import ContainerSpec, Mount, Podman, run_args
 
@@ -101,3 +108,34 @@ def test_call_returns_exit_code_and_both_outputs(tmp_path):
 
     assert code == 4
     assert "out logs c1" in text and "err" in text
+
+
+def test_interrupted_run_removes_the_container(tmp_path, monkeypatch):
+    exe = tmp_path / "podman"
+    exe.write_text(f'#!/bin/sh\nexec {sys.executable} {Path(__file__).parent / "fake_podman.py"} "$@"\n')
+    exe.chmod(0o755)
+    monkeypatch.setenv("FAKE_PODMAN_DIR", str(tmp_path))
+    containers = tmp_path / "containers"
+    agent = spec(name="llm-eval-agent-t1-abc")
+
+    def interrupt_when_the_agent_runs():
+        while not (containers / f"{agent.name}.json").exists():
+            time.sleep(0.01)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    threading.Thread(target=interrupt_when_the_agent_runs, daemon=True).start()
+    with pytest.raises(KeyboardInterrupt):
+        Podman(str(exe)).run(agent, tmp_path / "o", tmp_path / "e", timeout_s=60)
+
+    calls = [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text().splitlines()]
+    removed = ["rm", "-f", "-t", "10", "--ignore", agent.name]
+    assert any(c["event"] == "end" and c["argv"] == removed and c["code"] == 0 for c in calls)
+    assert not (containers / f"{agent.name}.json").exists()
+
+
+def test_call_runs_podman_in_a_new_process_group(tmp_path, monkeypatch):
+    exe = write_fake_podman(tmp_path, "ps -o pgid= -p $$\n")
+
+    code, text = Podman(str(exe)).call(["ps"])
+
+    assert int(text) != os.getpgid(0)

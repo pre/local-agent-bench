@@ -91,6 +91,9 @@ class State:
         self.fail_next: dict[str, list[tuple[int, str]]] = {}  # path -> one (status, body) for each next request
         self.system_in_middle = "reject"  # reject, drop or keep
         self.fail_type = "text/plain"
+        self.health_status = 200  # 503: the model loads
+        self.hang: set[str] = set()  # a POST to one of these paths gets no reply until release is set
+        self.release = threading.Event()
 
 
 def make_handler(state: State):
@@ -121,6 +124,9 @@ def make_handler(state: State):
 
         def do_GET(self):
             state.requests.append(("GET", self.path, None))
+            if self.path == "/health":
+                self._send(state.health_status, {"status": "ok" if state.health_status == 200 else "loading"})
+                return
             if not self._authorized():
                 return
             if self.path == "/slots":
@@ -138,6 +144,8 @@ def make_handler(state: State):
             state.requests.append(("POST", self.path, body))
             if not self._authorized():
                 return
+            if self.path in state.hang:
+                state.release.wait()
             if state.fail_next.get(self.path):
                 status, text = state.fail_next[self.path].pop(0)
                 self._send(status, text.encode(), state.fail_type)
@@ -186,5 +194,6 @@ class FakeLlama:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def stop(self):
+        self.state.release.set()
         self.server.shutdown()
         self.server.server_close()

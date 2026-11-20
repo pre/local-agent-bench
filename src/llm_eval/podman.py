@@ -73,6 +73,10 @@ class Podman:
                 subprocess.run([self.executable, "stop", "-t", "10", spec.name], capture_output=True)
                 code = proc.wait()
                 timed_out = True
+            except BaseException:  # a stop signal: the container must not continue without the harness
+                self.call(["rm", "-f", "-t", "10", "--ignore", spec.name])
+                proc.wait()
+                raise
         return RunResult(code, timed_out, time.monotonic() - start)
 
     def output(self, spec: ContainerSpec) -> str:
@@ -82,9 +86,13 @@ class Podman:
         return proc.stdout.strip()
 
     def call(self, args: list[str]) -> tuple[int, str]:
-        """Run one podman command. Return the exit code and stdout with stderr."""
+        """Run one podman command. Return the exit code and stdout with stderr.
+
+        The command runs in its own process group: the SIGINT and SIGHUP that a
+        terminal or tmux sends to the process group of the harness do not stop
+        it, for example the stop of the server during the cleanup."""
         proc = subprocess.run([self.executable, *args], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, text=True, errors="replace")
+                              stderr=subprocess.STDOUT, text=True, errors="replace", process_group=0)
         return proc.returncode, proc.stdout
 
     def image_info(self, image: str) -> dict:
