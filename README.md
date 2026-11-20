@@ -30,7 +30,7 @@ The justfile sets `TMPDIR` (default `~/tmp`) and the CA variables (`SSL_CERT_FIL
 | `image/Containerfile` | Agent image: Claude Code, Go 1.27 with gcc, Rust stable, Python 3.13, git, jq, yq 4, ripgrep, shellcheck, socat. Base images pinned by digest |
 | `client-config/` | The Claude Code configuration directory of a trial. No `CLAUDE.md`, no plugins, no MCP servers. Each trial gets a new copy |
 | `configs/` | One TOML file for each configuration |
-| `templates/` | Chat templates that a managed configuration can name |
+| `templates/` | Chat templates that a managed configuration can name: `qwen38-flash-next.jinja` (Qwen3.8, accepts a system message after the first message) and `gpt-oss-120b.jinja` (the embedded gpt-oss-120b template, keeps a system message after the first message, see "Models") |
 | `download/` | The list of model files (`models.tsv`) and the download script (see "Models") |
 | `tasks/<task-id>/` | One task (see "Task contract") |
 | `src/llm_eval/` | The orchestrator. Standard library only |
@@ -149,7 +149,7 @@ Consequences:
 
 - llama-server (since PR 32321) gives `output_config.effort` to the chat template as `reasoning_effort`. The request value replaces `--reasoning-effort` and the `reasoning_effort` of `--chat-template-kwargs`. Thus `CLAUDE_CODE_EFFORT_LEVEL` in `[client.env]` controls the effort. The server value applies only to a request without an effort, for example the protocol probe.
 - The server flags `--temp`, `--top-p`, `--top-k` and `--min-p` control the sampling, because Claude Code sends no sampling values.
-- The system message after the first user message must be supported by the chat template. The original Qwen3.8 template rejects it, and the gpt-oss template drops it with no error.
+- The system message after the first user message must be supported by the chat template. The original Qwen3.8 template rejects it, and the embedded gpt-oss template drops it with no error. `templates/gpt-oss-120b.jinja` keeps it (`gpt-oss-120b-sysmsg.toml`).
 
 ## Models
 
@@ -157,11 +157,12 @@ Consequences:
 |---|---|---|---|---|---|
 | `qwen38-base.toml` | Qwen3.8-Flash-Next, UD-Q4_K_XL, MTP head | 4 parts and a draft file | 88017 MiB GTT used with the desktop (measured) | Qwen Community License | Needs the patched chat template and `-lzm on` |
 | `gpt-oss-120b.toml` | gpt-oss-120b, F16 of unsloth (MXFP4 experts) | 1 file, 65.4 GB | about 68 GiB (estimate) | Apache 2.0 | The embedded template drops each system message after the first message, thus also the environment block of Claude Code |
+| `gpt-oss-120b-sysmsg.toml` | The same as `gpt-oss-120b.toml` | 1 file, 65.4 GB | about 68 GiB (estimate) | Apache 2.0 | Only the chat template is different: `templates/gpt-oss-120b.jinja` writes a system message after the first message at its position as a harmony developer message. Without such a message the prompt is the same as with the embedded template. A unit test compares the template with the embedded template (`tests/gpt-oss-120b-embedded-template.jinja`) |
 | `qwen3-coder-next.toml` | Qwen3-Coder-Next 80B-A3B, UD-Q8_K_XL | 3 parts, 86.3 GB | about 85 to 87 GiB (estimate) | Apache 2.0, card metadata only (the LICENSE link gives HTTP 404) | No thinking mode |
 | `qwen38-27b.toml` | Qwen3.8-27B dense, Q8_0, MTP layer inside (not verified) | 1 file, 29.0 GB | about 37 GiB (estimate) | Apache 2.0 | Needs the patched chat template of Flash-Next. MTP with no draft file. Check at the first start that the file has the MTP layer |
 | `glm-53-flash.toml` | GLM-5.3 Flash 320.8B-A18B, UD-IQ2_XXS, no MTP | 4 parts, 101.8 GB | about 93 to 95 GiB (estimate) | MIT | At the memory limit: starts only when GTT used is 6000 MiB or less. Published top-1 agreement 76 %. Reports of reasoning that collapses in long sessions |
 
-The four new configurations use `-lm none` (resident load, recommended on Strix Halo), port 8090, context 131072 and the image of `qwen38-base.toml`. The comments of each file give the source of each value. A unit test checks that each flag of each configuration is in the help text of llama-server build 12531 (`tests/llama-server-help-build12531.txt`). When the help text names the values of a flag (for example `-fa`, `-lm`, `-ctk`, `--reasoning-effort`, `--spec-type`), the value must be one of them. A flag with the placeholder `N` also accepts a number. The test also checks that the `model_file` of each new configuration is a file of `download/models.tsv`.
+The new configurations use `-lm none` (resident load, recommended on Strix Halo), port 8090, context 131072 and the image of `qwen38-base.toml`. The comments of each file give the source of each value. A unit test checks that each flag of each configuration is in the help text of llama-server build 12531 (`tests/llama-server-help-build12531.txt`). When the help text names the values of a flag (for example `-fa`, `-lm`, `-ctk`, `--reasoning-effort`, `--spec-type`), the value must be one of them. A flag with the placeholder `N` also accepts a number. The test also checks that the `model_file` of each new configuration is a file of `download/models.tsv`.
 
 ### Download
 
