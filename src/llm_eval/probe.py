@@ -348,7 +348,10 @@ def tool_calls(tools: list[dict], needed: list[str]):
 # Characters that a model can write in place of "-": hyphen, non-breaking hyphen,
 # figure dash, en dash, minus sign, small and fullwidth hyphen-minus.
 HYPHENS = str.maketrans(dict.fromkeys("\u2010\u2011\u2012\u2013\u2212\ufe63\uff0d", "-"))
-MARKUP = re.compile(r"[*`_\"'\u201c\u201d\u2018\u2019]")
+# A refusal or a doubt: "not", "can't", "unsure", a question and some more. A <think>
+# section of the text is not part of the answer.
+DOUBT = re.compile(r"\b(?:not|cannot|unable|unknown|unsure|sorry|doubt|maybe|perhaps|might|guess|assume)\b|n't\b|\?")
+THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 def _fold(text: str) -> str:
@@ -369,19 +372,18 @@ def contains_any(*words: str):
     return check
 
 
-def answers_with_only(code: str, name: str):
-    """The answer is the code, or "<name> is <code>" or "<name>: <code>". Markdown
-    emphasis, quotes and a full stop are permitted. A longer text that names the
-    code fails, for example a refusal: "I can't confirm that it equals LIME-93"."""
-    accepted = {_fold(code), _fold(f"{name} is {code}"), _fold(f"{name}: {code}")}
-
+def states_the_code(code: str):
+    """The answer has the code and no word of a refusal or a doubt. Thus "I can't
+    confirm that it equals LIME-93" fails, and "The code is LIME-93." passes."""
     def check(reply: Reply, client: "Client") -> tuple[bool, str]:
         text = _text(reply)
-        answer = " ".join(MARKUP.sub("", _fold(text)).split()).rstrip(".")
-        if answer in accepted:
-            return True, f"text: {text[:200]!r}"
-        found = "the answer is not only the code, " if _fold(code) in _fold(text) else ""
-        return False, f"{found}text: {text[:200]!r}"
+        answer = _fold(THINK.sub("", text)).replace("\u2019", "'")
+        if _fold(code) not in answer:
+            return False, f"text: {text[:200]!r}"
+        doubt = ", ".join(sorted(set(DOUBT.findall(answer))))
+        if doubt:
+            return False, f"the code is in the text, but with refusal or doubt ({doubt}), text: {text[:200]!r}"
+        return True, f"text: {text[:200]!r}"
     return check
 
 
@@ -481,7 +483,7 @@ CASES = (
     Case("system_in_middle", "A system message in the middle of the conversation", {"messages": [
         _user("Hello."), {"role": "assistant", "content": "Hello. How can I help?"},
         {"role": "system", "content": "Code C is LIME-93."}, _user("What is code C? Answer with the code only.")]},
-        answers_with_only("LIME-93", "Code C")),
+        states_the_code("LIME-93")),
     Case("tool_call", "The model must call a tool, the input must match the schema",
          {"tools": [WEATHER], "messages": [_user(WEATHER_QUESTION)]}, tool_calls([WEATHER], ["get_weather"])),
     Case("tool_round_trip", "Assistant tool_use, user tool_result, final answer", {"tools": [WEATHER], "messages": [

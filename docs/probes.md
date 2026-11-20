@@ -74,7 +74,7 @@ The protocol probe sends a fixed list of small requests to `/v1/messages`, the e
 |---|---|---|
 | `plain` | One user message | The text has the requested word |
 | `two_system_blocks` | Two system blocks at the start | The text has the codes of the two blocks. A hyphen character such as U+2011 (non-breaking hyphen) counts as "-" |
-| `system_in_middle` | A system message in the middle of the conversation | The answer is only the code of the system message (`LIME-93`, also `Code C is LIME-93.`, Markdown emphasis and quotes are permitted). A refusal that names the code fails, and its note starts with "the answer is not only the code". The original chat template of Qwen3.8 gave HTTP 500 "System message must be at the beginning". The gate stops the trials only on an HTTP error of this case |
+| `system_in_middle` | A system message in the middle of the conversation | The answer has the code of the system message (`LIME-93`) and no word of a refusal or a doubt (`not`, `can't`, `cannot`, `unsure`, `maybe`, a question mark and some more). A `<think>` section does not count. A refusal that names the code fails, and its note starts with "the code is in the text, but with refusal or doubt". The original chat template of Qwen3.8 gave HTTP 500 "System message must be at the beginning". The gate stops the trials only on an HTTP error of this case |
 | `tool_call` | A question that needs a tool | A `tool_use` block, the input agrees with the schema |
 | `tool_round_trip` | Assistant `tool_use`, user `tool_result` | The final text uses the tool result |
 | `parallel_tools` | A question that needs two tools | Two `tool_use` blocks in one turn, each input agrees with its schema |

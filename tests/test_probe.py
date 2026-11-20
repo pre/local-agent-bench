@@ -282,22 +282,28 @@ def test_two_system_blocks_accepts_each_hyphen_character(hyphen):
     assert passed
 
 
-@pytest.mark.parametrize("text", ["LIME-93", "LIME-93.", "`LIME-93`", "**LIME\u201193**", "lime-93\n",
-                                  "Code C is LIME-93.", "Code C: LIME-93"])
-def test_system_in_middle_passes_when_the_answer_is_the_code(text):
+@pytest.mark.parametrize("text", [
+    "LIME-93", "LIME-93.", "LIME-93!", "lime-93\n", "`LIME-93`", "**LIME‑93**", "```text\nLIME-93\n```",
+    "Code C is LIME-93.", "Code C: LIME-93", "Code C is: LIME-93", "Code C = LIME-93", "The code is LIME-93.",
+    "<think>The system message gives code C.</think>LIME-93",
+])
+def test_system_in_middle_passes_when_the_answer_states_the_code(text):
     passed, _ = case_named("system_in_middle").check(answer(text), None)
 
     assert passed
 
 
 @pytest.mark.parametrize("text", [
-    "I don't have any information about \"code C\" \u2014 I can't confirm that it equals LIME-93, so I can't just"
+    "I don't have any information about \"code C\" — I can't confirm that it equals LIME-93, so I can't just"
     " repeat that.",
+    "I don’t know code C. Is it LIME-93?",
     "Code C is not LIME-93.",
+    "I cannot confirm LIME-93.",
     "Hello! What can I do for you?",
+    "```c\n#include <stdio.h>\n\nint main(void) {\n    printf(\"Hello, World!\\n\");\n    return 0;\n}\n```",
 ])
-def test_system_in_middle_fails_when_the_code_is_not_the_answer(text):
+def test_system_in_middle_fails_on_a_refusal_or_doubt(text):
     passed, note = case_named("system_in_middle").check(answer(text), None)
 
     assert not passed
-    assert note.startswith("the answer is not only the code" if "LIME-93" in text else "text:")
+    assert note.startswith("the code is in the text, but with refusal or doubt" if "LIME-93" in text else "text:")
