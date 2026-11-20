@@ -1,6 +1,7 @@
 """The configuration files in configs/."""
 
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -101,6 +102,10 @@ MODELS = {
         "-m /models/gpt-oss-120b-F16.gguf --alias gpt-oss-120b"
         " -ngl all -fa on -lm none -np 1 -b 2048 -ub 2048 --jinja --reasoning-effort high --temp 1.0 --top-p 1.0"
         " --top-k 0 --min-p 0.0"),
+    "gpt-oss-120b-sysmsg.toml": (
+        "-m /models/gpt-oss-120b-F16.gguf --alias gpt-oss-120b"
+        " -ngl all -fa on -lm none -np 1 -b 2048 -ub 2048 --jinja --reasoning-effort high --temp 1.0 --top-p 1.0"
+        " --top-k 0 --min-p 0.0 --chat-template-file /run/chat-template.jinja"),
     "qwen3-coder-next.toml": (
         "-m /models/UD-Q8_K_XL/Qwen3-Coder-Next-UD-Q8_K_XL-00001-of-00003.gguf --alias qwen3-coder-next"
         " -ngl all -fa on -lm none -np 1 --jinja --temp 1.0 --top-p 0.95 --top-k 40 --min-p 0.01"),
@@ -155,6 +160,15 @@ def test_only_glm_needs_a_clean_gpu():
 
 def test_qwen38_27b_uses_the_patched_template():
     assert load_config(CONFIGS / "qwen38-27b.toml").server.managed.chat_template == "templates/qwen38-flash-next.jinja"
+
+
+def test_gpt_oss_sysmsg_changes_only_the_chat_template():
+    plain, sysmsg = (load_config(CONFIGS / name) for name in ("gpt-oss-120b.toml", "gpt-oss-120b-sysmsg.toml"))
+
+    assert sysmsg.server.managed.chat_template == "templates/gpt-oss-120b.jinja"
+    assert (ROOT / sysmsg.server.managed.chat_template).is_file()
+    assert replace(sysmsg.server, managed=replace(sysmsg.server.managed, chat_template=None)) == plain.server
+    assert sysmsg.client == plain.client
 
 
 HELP = (Path(__file__).parent / "llama-server-help-build12531.txt").read_text()

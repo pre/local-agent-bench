@@ -5,7 +5,7 @@
 # Chat template: the embedded template (no chat_template key). It drops each system message
 # that is not the first message, with no error. Claude Code 2.1.328 sends its environment
 # block (working directory, platform, agent types, skills) as a system message after the
-# first user message, so this model never sees that block.
+# first user message, so this model never sees that block. gpt-oss-120b-sysmsg.toml keeps it.
 # The template writes "Reasoning: <effort>" for each effort value, with no error.
 name = "gpt-oss-120b"
 

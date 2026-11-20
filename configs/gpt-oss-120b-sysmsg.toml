@@ -1,0 +1,55 @@
+# gpt-oss-120b, F16 file of unsloth (MXFP4 experts, the other tensors 16-bit), revision ff1a82da.
+# Download: just download-model gpt-oss-120b. License: Apache 2.0.
+# Expected GTT: about 68 GiB (estimate: 60.9 GiB weights, 4.5 GiB KV f16, compute buffers).
+#
+# The one difference from gpt-oss-120b.toml: chat_template. The other values are a copy.
+# The embedded template drops each system message that is not the first message, thus also
+# the environment block that Claude Code 2.1.328 sends after the first user message.
+# templates/gpt-oss-120b.jinja is the embedded template with one added branch: it writes
+# such a message at its position as a harmony developer message
+# ("<|start|>developer<|message|># Instructions" and the text). A conversation without
+# such a message gives the same prompt as the embedded template.
+# The template writes "Reasoning: <effort>" for each effort value, with no error.
+name = "gpt-oss-120b-sysmsg"
+
+[server]
+mode = "managed"
+image = "docker.io/kyuz0/amd-strix-halo-toolboxes@sha256:a01d3ea5b7cbc64e2969be2a833fd5d665fb888d73447de52a54375a7a2fcb76"
+models_dir = "~/models/gpt-oss-120b"
+model_file = "gpt-oss-120b-F16.gguf"
+model = "gpt-oss-120b"
+context_tokens = 131072
+chat_template = "templates/gpt-oss-120b.jinja"
+api_key_file = "~/.config/llama-server/api-key"
+port = 8090
+gtt_max_used_mib = 12288
+
+[server.args]
+-ngl = "all"
+-fa = "on"
+-lm = "none"                   # resident load, recommended on Strix Halo (kyuz0)
+-np = 1
+-b = 2048
+-ub = 2048
+--jinja = true
+--reasoning-effort = "high"    # only for a request without an effort, see [client.env]
+# Sampling: OpenAI recommends temperature 1.0 and top_p 1.0 and gives no top_k or min_p.
+# --top-k 0 and --min-p 0.0 switch off the llama.cpp defaults (top_k 40, min_p 0.05),
+# so the effective sampling is the sampling of OpenAI. The two flags are an inference
+# of the research, not a published recommendation.
+--temp = 1.0
+--top-p = 1.0
+--top-k = 0
+--min-p = 0.0
+
+[client]
+image = "localhost/llm-eval-agent:latest"
+config_dir = "client-config"
+
+[client.env]
+CLAUDE_CODE_ATTRIBUTION_HEADER = "0"
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"
+# Claude Code sends output_config.effort in each request, and llama-server gives it
+# to the template. The request value replaces --reasoning-effort.
+CLAUDE_CODE_EFFORT_LEVEL = "high"
