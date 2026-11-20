@@ -7,16 +7,25 @@ from pathlib import Path
 PROMPT = re.compile(r"prompt eval time =\s*([\d.]+) ms /\s*(\d+) tokens")
 DECODE = re.compile(r"\|\s*eval time =\s*([\d.]+) ms /\s*(\d+) tokens")
 DRAFT = re.compile(r"draft acceptance = [\d.]+ \(\s*(\d+) accepted /\s*(\d+) generated\)")
+CANCEL = re.compile(r"cancel task, id_task = (\d+)")
+PROGRESS = re.compile(r"\| task (\d+) \| n_gen =\s*(\d+)")
 
 
 def parse_timings(log: str) -> dict:
-    """Totals of all requests in the log. A rate is total tokens / total seconds."""
+    """Totals of the completed requests in the log. A rate is total tokens / total seconds.
+
+    A cancelled request (for example at the time limit of a trial) has no totals
+    in the log, only a line "n_gen = <tokens>" about each 3 s. Its values are
+    not in the totals: cancelled_requests counts them, and
+    cancelled_decode_tokens_min is the sum of their last n_gen values."""
     prompt = [(float(ms), int(n)) for ms, n in PROMPT.findall(log)]
     decode = [(float(ms), int(n)) for ms, n in DECODE.findall(log)]
     draft = [(int(a), int(g)) for a, g in DRAFT.findall(log)]
     prompt_tokens, prompt_s = sum(n for _, n in prompt), sum(ms for ms, _ in prompt) / 1000
     decode_tokens, decode_s = sum(n for _, n in decode), sum(ms for ms, _ in decode) / 1000
     accepted, generated = (sum(a for a, _ in draft), sum(g for _, g in draft)) if draft else (None, None)
+    cancelled = set(CANCEL.findall(log))
+    last_n_gen = {task: int(n) for task, n in PROGRESS.findall(log) if task in cancelled}
     return {
         "requests": len(prompt),
         "prompt_tokens": prompt_tokens,
@@ -28,6 +37,8 @@ def parse_timings(log: str) -> dict:
         "draft_accepted": accepted,
         "draft_generated": generated,
         "draft_acceptance": _rate(accepted, generated, 4) if draft else None,
+        "cancelled_requests": len(cancelled),
+        "cancelled_decode_tokens_min": sum(last_n_gen.values()),
     }
 
 

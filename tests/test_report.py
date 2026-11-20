@@ -377,3 +377,19 @@ def test_memory_section_without_memory_values(tmp_path):
     text = render_report([load_run(write_run(tmp_path / "r", [trial("t1")]))])
 
     assert memory_row(text, "c1") == ["n/a"] * 9
+
+
+def test_report_names_the_cancelled_requests_that_are_not_in_the_speed_values(tmp_path):
+    cancelled = {**server(2438, 13.6, 94, 6.4), "cancelled_requests": 1, "cancelled_decode_tokens_min": 21024}
+    trials = [trial("t1", server=cancelled), trial("t2", server=server(100, 2.0, 300, 20.0))]
+
+    text = render_report([load_run(write_run(tmp_path / "r", trials))])
+
+    assert ("1 requests that were cancelled (for example at the time limit of a trial) are not in the speed"
+            " values. Their log shows at least 21024 decoded tokens.") in text
+
+
+def test_report_of_old_results_without_cancelled_values_has_no_note(tmp_path):
+    text = render_report([load_run(write_run(tmp_path / "r", [trial("t1", server=server(100, 2.0, 300, 20.0))]))])
+
+    assert "cancelled" not in text

@@ -16,6 +16,32 @@ LOG = """\
 """
 
 
+# A request that the harness cancels at the trial time limit: no totals, only progress lines.
+CANCELLED = """\
+277.36.604.671 I slot launch_slot_: id  0 | task 66533 | processing task, is_child = 0
+277.48.947.638 I slot print_timing: id  0 | task 66533 | prompt processing, n_tokens =   2224, progress = 1.00, t =   9.59 s / 232.00 tokens per second
+307.11.066.789 I slot print_timing: id  0 | task 66533 | n_gen =  20984, tg =  11.91 t/s, tg_3s =  13.94 t/s
+307.14.081.338 I slot print_timing: id  0 | task 66533 | n_gen =  21024, tg =  11.91 t/s, tg_3s =  13.27 t/s
+307.15.155.149 W srv          stop: cancel task, id_task = 66533
+"""
+
+
+def test_cancelled_request_is_counted_apart_from_the_totals():
+    timings = parse_timings(LOG + CANCELLED)
+
+    assert timings["requests"] == 2 and timings["decode_tokens"] == 264
+    assert timings["cancelled_requests"] == 1
+    assert timings["cancelled_decode_tokens_min"] == 21024
+
+
+def test_request_cancelled_before_its_first_token():
+    log = "1.00.000.000 W srv          stop: cancel task, id_task = 7\n"
+
+    timings = parse_timings(log)
+
+    assert timings["cancelled_requests"] == 1 and timings["cancelled_decode_tokens_min"] == 0
+
+
 def test_parse_timings_sums_all_requests():
     timings = parse_timings(LOG)
 
@@ -30,6 +56,8 @@ def test_parse_timings_sums_all_requests():
         "draft_accepted": 177,
         "draft_generated": 255,
         "draft_acceptance": 0.6941,
+        "cancelled_requests": 0,
+        "cancelled_decode_tokens_min": 0,
     }
 
 
@@ -42,6 +70,7 @@ def test_parse_timings_without_draft_and_without_requests():
         "requests": 0, "prompt_tokens": 0, "prompt_seconds": 0.0, "prompt_tps": None,
         "decode_tokens": 0, "decode_seconds": 0.0, "decode_tps": None,
         "draft_accepted": None, "draft_generated": None, "draft_acceptance": None,
+        "cancelled_requests": 0, "cancelled_decode_tokens_min": 0,
     }
 
 

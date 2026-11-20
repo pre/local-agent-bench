@@ -14,7 +14,10 @@ The harness starts the observers just before the agent container and stops them 
 ```json
 {"requests": 25, "prompt_tokens": 90708, "prompt_seconds": 312.579, "prompt_tps": 290.19,
  "decode_tokens": 17894, "decode_seconds": 773.532, "decode_tps": 23.13,
- "draft_accepted": 11323, "draft_generated": 19642, "draft_acceptance": 0.5765}
+ "draft_accepted": 11323, "draft_generated": 19642, "draft_acceptance": 0.5765,
+ "cancelled_requests": 0, "cancelled_decode_tokens_min": 0}
 ```
+
+The totals and rates are for the completed requests only. A cancelled request (`cancel task` in the log), for example the request in progress at the time limit of a trial, has no `print_timing` totals. The log shows only its decoded tokens about each 3 s (`n_gen`). `cancelled_requests` counts the cancelled requests, and `cancelled_decode_tokens_min` is the sum of their last `n_gen` values: the real count is equal or higher. The report names them below the configuration table. A `result.json` of an earlier version has no such keys.
 
 The log has no client ID. If other clients use an external server during a trial, their requests are also in these values. A managed server has no other clients.

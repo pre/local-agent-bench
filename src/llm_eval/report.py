@@ -332,6 +332,12 @@ def _config_table(rows: list[ConfigStats]) -> list[str]:
               " the counted trials, total wall time is for all trials. Cost USD is the sum of the cost estimates of"
               " Claude Code for all trials of a remote configuration. Speed values are for all trials. Memory values"
               " are for all trials and the probes. GTT peak also includes the server start, see \"Memory\"."]
+    servers = [v for s in rows for v in _observed(s.trials, "server")]
+    cancelled = sum(v.get("cancelled_requests", 0) for v in servers)  # an older result.json has no such key
+    if cancelled:
+        tokens = sum(v["cancelled_decode_tokens_min"] for v in servers if "cancelled_requests" in v)
+        lines += ["", f"{cancelled} requests that were cancelled (for example at the time limit of a trial) are not"
+                      f" in the speed values. Their log shows at least {tokens} decoded tokens."]
     return lines
 
 
