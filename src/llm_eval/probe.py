@@ -344,17 +344,26 @@ def tool_calls(tools: list[dict], needed: list[str]):
     return lambda reply, client: _tool_check(_blocks(reply, "tool_use"), tools, needed)
 
 
+# Characters that a model can write in place of "-": hyphen, non-breaking hyphen,
+# figure dash, en dash, minus sign, small and fullwidth hyphen-minus.
+HYPHENS = str.maketrans(dict.fromkeys("\u2010\u2011\u2012\u2013\u2212\ufe63\uff0d", "-"))
+
+
+def _fold(text: str) -> str:
+    return text.translate(HYPHENS).lower()
+
+
 def contains(*words: str):
     def check(reply: Reply, client: "Client") -> tuple[bool, str]:
         text = _text(reply)
-        return all(w.lower() in text.lower() for w in words), f"text: {text[:200]!r}"
+        return all(_fold(w) in _fold(text) for w in words), f"text: {text[:200]!r}"
     return check
 
 
 def contains_any(*words: str):
     def check(reply: Reply, client: "Client") -> tuple[bool, str]:
         text = _text(reply)
-        return any(w.lower() in text.lower() for w in words), f"text: {text[:200]!r}"
+        return any(_fold(w) in _fold(text) for w in words), f"text: {text[:200]!r}"
     return check
 
 

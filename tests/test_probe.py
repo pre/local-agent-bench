@@ -263,3 +263,21 @@ def test_client_event_that_is_not_json(fake, client):
     assert reply.status == 200
     assert not reply.ok
     assert reply.error.startswith("JSONDecodeError")
+
+
+def answer(text: str) -> probe.Reply:
+    return probe.Reply(200, body={"content": [{"type": "text", "text": text}]})
+
+
+def case_named(name: str) -> probe.Case:
+    return next(c for c in CASES if c.name == name)
+
+
+@pytest.mark.parametrize("hyphen", ["-", "\u2010", "\u2011", "\u2012", "\u2013", "\u2212"])
+def test_two_system_blocks_accepts_each_hyphen_character(hyphen):
+    text = f"**Code A:** KIWI{hyphen}17  \n**Code B:** ZEBRA{hyphen}42"
+
+    passed, _ = case_named("two_system_blocks").check(answer(text), None)
+
+    assert passed
+

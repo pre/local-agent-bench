@@ -73,7 +73,7 @@ The protocol probe sends a fixed list of small requests to `/v1/messages`, the e
 | Case | Request | Assertion |
 |---|---|---|
 | `plain` | One user message | The text has the requested word |
-| `two_system_blocks` | Two system blocks at the start | The text has the codes of the two blocks |
+| `two_system_blocks` | Two system blocks at the start | The text has the codes of the two blocks. A hyphen character such as U+2011 (non-breaking hyphen) counts as "-" |
 | `system_in_middle` | A system message in the middle of the conversation | The text has the code of the system message. The original chat template of Qwen3.8 gave HTTP 500 "System message must be at the beginning" |
 | `tool_call` | A question that needs a tool | A `tool_use` block, the input agrees with the schema |
 | `tool_round_trip` | Assistant `tool_use`, user `tool_result` | The final text uses the tool result |
