@@ -12,6 +12,7 @@ each request, and a wait until the slots of the server are idle.
 
 import itertools
 import json
+import re
 import sysconfig
 import time
 import urllib.error
@@ -347,6 +348,7 @@ def tool_calls(tools: list[dict], needed: list[str]):
 # Characters that a model can write in place of "-": hyphen, non-breaking hyphen,
 # figure dash, en dash, minus sign, small and fullwidth hyphen-minus.
 HYPHENS = str.maketrans(dict.fromkeys("\u2010\u2011\u2012\u2013\u2212\ufe63\uff0d", "-"))
+MARKUP = re.compile(r"[*`_\"'\u201c\u201d\u2018\u2019]")
 
 
 def _fold(text: str) -> str:
@@ -364,6 +366,22 @@ def contains_any(*words: str):
     def check(reply: Reply, client: "Client") -> tuple[bool, str]:
         text = _text(reply)
         return any(_fold(w) in _fold(text) for w in words), f"text: {text[:200]!r}"
+    return check
+
+
+def answers_with_only(code: str, name: str):
+    """The answer is the code, or "<name> is <code>" or "<name>: <code>". Markdown
+    emphasis, quotes and a full stop are permitted. A longer text that names the
+    code fails, for example a refusal: "I can't confirm that it equals LIME-93"."""
+    accepted = {_fold(code), _fold(f"{name} is {code}"), _fold(f"{name}: {code}")}
+
+    def check(reply: Reply, client: "Client") -> tuple[bool, str]:
+        text = _text(reply)
+        answer = " ".join(MARKUP.sub("", _fold(text)).split()).rstrip(".")
+        if answer in accepted:
+            return True, f"text: {text[:200]!r}"
+        found = "the answer is not only the code, " if _fold(code) in _fold(text) else ""
+        return False, f"{found}text: {text[:200]!r}"
     return check
 
 
@@ -463,7 +481,7 @@ CASES = (
     Case("system_in_middle", "A system message in the middle of the conversation", {"messages": [
         _user("Hello."), {"role": "assistant", "content": "Hello. How can I help?"},
         {"role": "system", "content": "Code C is LIME-93."}, _user("What is code C? Answer with the code only.")]},
-        contains("LIME-93")),
+        answers_with_only("LIME-93", "Code C")),
     Case("tool_call", "The model must call a tool, the input must match the schema",
          {"tools": [WEATHER], "messages": [_user(WEATHER_QUESTION)]}, tool_calls([WEATHER], ["get_weather"])),
     Case("tool_round_trip", "Assistant tool_use, user tool_result, final answer", {"tools": [WEATHER], "messages": [
