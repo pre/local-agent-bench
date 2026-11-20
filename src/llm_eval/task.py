@@ -1,4 +1,4 @@
-"""Tasks: one directory in tasks/ (see "Task contract" in README.md)."""
+"""Tasks: one directory in tasks/ (see docs/tasks.md)."""
 
 import tomllib
 from dataclasses import dataclass
