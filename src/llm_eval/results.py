@@ -140,5 +140,13 @@ def redact_tree(root: Path, secrets: Iterable[str], replacement: str = "<redacte
     return changed
 
 
-def write_json(path: Path, data: dict) -> None:
-    path.write_text(json.dumps(data, indent=2, sort_keys=False) + "\n")
+def write_json(path: Path, data: dict, secrets: Iterable[str] = ()) -> None:
+    """Write the file at once: a temporary file in the same directory, then a rename.
+    A stop during the write leaves the earlier file or no file, not a part of the
+    file. Each secret in the text becomes "<redacted>", the same as redact_tree."""
+    text = json.dumps(data, indent=2, sort_keys=False) + "\n"
+    for secret in secrets:
+        text = text.replace(secret, "<redacted>")
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(text)
+    temporary.replace(path)

@@ -1,8 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from llm_eval.podman import RunResult
-from llm_eval.results import classify, redact_tree, secret_values, summarize_transcript
+from llm_eval.results import classify, redact_tree, secret_values, summarize_transcript, write_json
 from llm_eval.workspace import CheckResult
 
 RESULT_OK = {
@@ -183,3 +185,26 @@ def test_summarize_reads_models_and_cost(tmp_path):
 
     assert s.models == ("claude-test-1", "other")
     assert s.result["total_cost_usd"] == 0.42
+
+
+def test_write_json_keeps_the_earlier_file_when_the_write_stops(tmp_path, monkeypatch):
+    path = tmp_path / "result.json"
+    write_json(path, {"a": 1})
+    real_write_text = Path.write_text
+
+    def stop_after_a_part(self, text, *args, **kw):
+        real_write_text(self, text[:5])
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Path, "write_text", stop_after_a_part)
+    with pytest.raises(KeyboardInterrupt):
+        write_json(path, {"b": 2})
+    monkeypatch.undo()
+
+    assert json.loads(path.read_text()) == {"a": 1}
+
+
+def test_write_json_replaces_the_secrets(tmp_path):
+    write_json(tmp_path / "r.json", {"detail": "key sk-secret-123 in the text"}, ["sk-secret-123"])
+
+    assert json.loads((tmp_path / "r.json").read_text()) == {"detail": "key <redacted> in the text"}

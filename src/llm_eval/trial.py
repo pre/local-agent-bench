@@ -163,8 +163,7 @@ def run_trial(ctx: RunContext, task: Task, rep: int) -> dict:
         "started_at": started,
         "finished_at": utc_now(),
     }
-    write_json(trial_dir / "result.json", result)
-    redact_tree(trial_dir, secret_values(ctx.secret_env))
+    finish_trial(ctx, trial_dir, result)
     return result
 
 
@@ -192,9 +191,17 @@ def error_result(ctx: RunContext, task: Task, rep: int, error: Exception, starte
         "started_at": started,
         "finished_at": utc_now(),
     }
-    write_json(trial_dir / "result.json", result)
-    redact_tree(trial_dir, secret_values(ctx.secret_env))
+    finish_trial(ctx, trial_dir, result)
     return result
+
+
+def finish_trial(ctx: RunContext, trial_dir: Path, result: dict) -> None:
+    """Remove the secrets from the trial files, then write result.json as the last
+    file. --resume runs a trial without result.json again, thus a stop before the
+    end of this function leaves no complete trial with secret values."""
+    secrets = secret_values(ctx.secret_env)
+    redact_tree(trial_dir, secrets)
+    write_json(trial_dir / "result.json", result, secrets)
 
 
 def log(ctx: RunContext, line: str) -> None:

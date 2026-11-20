@@ -26,7 +26,7 @@
 3. Run the agent container: `claude -p <prompt.md> --output-format stream-json --verbose --max-turns <max_turns> --dangerously-skip-permissions`. Stop it at `timeout_s`.
 4. Write the diff of the work against the start commit (new files included) in a container.
 5. Run the check container: `bash /verify/verify.sh`, limit 300 s.
-6. Write `result.json`. Then replace the API key and the secret values of `[client.secrets]` with `<redacted>` in all files of the trial.
+6. Replace the API key and the secret values of `[client.secrets]` with `<redacted>` in all files of the trial. Then write `result.json` as the last file, also without the secret values. The harness writes it to a temporary file and renames it, thus a stop leaves no part of a `result.json`. A trial without `result.json` runs again at `--resume`.
 
 Containers:
 

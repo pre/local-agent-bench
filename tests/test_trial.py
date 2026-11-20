@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from fakes import FakePodman, check_by_marker
+from llm_eval import trial as trial_module
 from llm_eval.config import load_config
 from llm_eval.podman import run_args
 from llm_eval.server import ExternalServer, RemoteServer, ServerError, open_server
@@ -115,6 +116,26 @@ def test_secret_is_removed_from_trial_files(root):
     for path in out.rglob("*"):
         if path.is_file():
             assert SECRET.encode() not in path.read_bytes(), path
+
+
+def test_result_json_is_written_last_after_the_redaction(root, monkeypatch):
+    seen = []
+    real_redact = trial_module.redact_tree
+
+    def redact(trial_dir, secrets):
+        seen.append((trial_dir / "result.json").exists())
+        return real_redact(trial_dir, secrets)
+
+    monkeypatch.setattr(trial_module, "redact_tree", redact)
+    events = [{"type": "assistant", "message": {"model": f"m-{SECRET}", "content": [{"type": "text", "text": "ok"}]}},
+              RESULT_OK]
+    podman = FakePodman(agent=agent_that(events), check=check_by_marker())
+
+    _, out = run(root, podman)
+
+    assert seen == [False]
+    result = json.loads((out / "t1-r1" / "result.json").read_text())
+    assert result["models"] == ["m-<redacted>"]
 
 
 def test_timeout_trial(root):
