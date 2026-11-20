@@ -15,15 +15,24 @@
 # load a file that is not verified. A file that does not match becomes FILE.bad and
 # is downloaded again once. The next download of the file removes FILE.bad.
 #
+# aria2 stops when the TLS proxy breaks connections, so the script starts it
+# again (ATTEMPTS times, RETRY_WAIT seconds apart). Each model directory gets download.log with the status
+# lines, because "podman logs" can lose lines of a long log.
+#
 # download.sh --verify MODEL...  checks the files with their final names against
 # the data file, on the host or in the container. It downloads nothing. The exit
 # code is 1 when a file is missing or does not match.
 set -u
 RATE=${RATE:-28M}
+ATTEMPTS=${ATTEMPTS:-5}
+RETRY_WAIT=${RETRY_WAIT:-60}
 TSV=${TSV:-/run/models.tsv}
 MODELS=${MODELS:-/models}
 
 rows() { awk -F'\t' -v m="$1" '$1 == m' "$TSV"; }
+
+# A status line to stdout and to download.log of the model.
+note() { line="$(date -u +%FT%TZ) $2"; echo "$line"; echo "$line" >> "$MODELS/$1/download.log"; }
 
 sha256() { ionice -c 3 nice -n 19 sha256sum -c -; }
 
@@ -47,13 +56,19 @@ fetch() {
     rm -f "$dir/$path.bad"
     printf '%s\n  out=%s.part\n' "https://huggingface.co/$repo/resolve/$rev/$path" "$path" >> "$input"
   done
-  [ -s "$input" ] && aria2c --input-file="$input" --dir="$dir" --continue=true \
+  attempt=1
+  while [ -s "$input" ] && ! aria2c --input-file="$input" --dir="$dir" --continue=true \
     --max-concurrent-downloads=4 --max-connection-per-server=16 --split=16 --min-split-size=64M \
     --max-overall-download-limit="$RATE" \
     --file-allocation=none --auto-file-renaming=false \
     --max-tries=0 --retry-wait=10 --timeout=60 --connect-timeout=30 \
     --ca-certificate=/run/host-ca.crt \
-    --console-log-level=warn --summary-interval=300
+    --console-log-level=warn --summary-interval=300; do
+    [ "$attempt" -ge "$ATTEMPTS" ] && break
+    note "$1" "aria2 attempt $attempt failed, start again in $RETRY_WAIT s"
+    attempt=$((attempt + 1))
+    sleep "$RETRY_WAIT"
+  done
   rm -f "$input"
   rc=0
   for path in $(rows "$1" | cut -f5); do
@@ -91,13 +106,13 @@ verify() {
 
 download() {
   write_metadata "$1"
-  echo "$(date -u +%FT%TZ) start $1"
+  note "$1" "start $1"
   if ! fetch "$1"; then
-    echo "FAILED $1: download not complete, run again to continue"
+    note "$1" "FAILED $1: download not complete, run again to continue"
     return 1
   fi
-  echo "$(date -u +%FT%TZ) downloaded $1"
-  promote "$1" || { echo "download again once: $1"; fetch "$1" && promote "$1"; }
+  note "$1" "downloaded $1"
+  promote "$1" || { note "$1" "download again once: $1"; fetch "$1" && promote "$1"; }
   return 0
 }
 
@@ -112,9 +127,9 @@ for model in "$@"; do
   elif [ "$mode" = download ] && ! download "$model"; then
     status=1
   elif verify "$model"; then
-    echo "$(date -u +%FT%TZ) VERIFIED $model"
+    note "$model" "VERIFIED $model"
   else
-    echo "FAILED $model: a file is missing or does not match its SHA-256"; status=1
+    note "$model" "FAILED $model: a file is missing or does not match its SHA-256"; status=1
   fi
 done
 [ "$status" = 0 ] && echo "ALL DONE" || echo "FAILED: see the lines above"

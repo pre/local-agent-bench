@@ -75,7 +75,7 @@ download-model +names:
       echo "The container model-download runs. Wait until it stops (podman logs -f model-download)."
       exit 1
     fi
-    podman run -d --replace --name model-download -e RATE="${RATE:-28M}" \
+    podman run -d --replace --name model-download -e RATE="${RATE:-28M}" -e ATTEMPTS="${ATTEMPTS:-5}" \
       -e SSL_CERT_FILE=/run/host-ca.crt \
       -v {{ca_file}}:/run/host-ca.crt:ro -v {{ca_file}}:/etc/ssl/certs/ca-certificates.crt:ro \
       -v "{{justfile_directory()}}/download/models.tsv:/run/models.tsv:ro" \

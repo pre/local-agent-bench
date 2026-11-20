@@ -58,9 +58,9 @@ class Env:
         executable(self.bin / "aria2c", FAKE_ARIA2C)
         executable(self.bin / "apk", '#!/bin/sh\ntouch "$SOURCE/apk-called"\n')
 
-    def run(self, *args: str) -> subprocess.CompletedProcess:
+    def run(self, *args: str, **extra: str) -> subprocess.CompletedProcess:
         env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "TSV": str(self.tsv),
-               "MODELS": str(self.models), "SOURCE": str(self.source)}
+               "MODELS": str(self.models), "SOURCE": str(self.source), **extra}
         return subprocess.run([*self.shell, str(SCRIPT), *args], env=env, capture_output=True, text=True)
 
     def put(self, name: str, data: bytes) -> Path:
@@ -150,8 +150,40 @@ def test_download_gives_the_final_name_after_the_sha256_check(env):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "VERIFIED m" in result.stdout
-    assert env.names() == {"a.gguf", "sub/b.gguf", "expected-sha256.tsv", "source.txt"}
+    assert env.names() == {"a.gguf", "sub/b.gguf", "expected-sha256.tsv", "source.txt", "download.log"}
     assert sorted(env.requests()) == ["a.gguf.part", "sub/b.gguf.part"]
+    log = (env.models / "m" / "download.log").read_text()
+    assert [line.split(" ", 1)[1] for line in log.splitlines()] == ["start m", "downloaded m", "VERIFIED m"]
+
+
+def failing_aria2c(env: Env, failures: int) -> None:
+    """aria2c fails `failures` times (a broken TLS connection), then works."""
+    (env.source / "failures").write_text("x\n" * failures)
+    executable(env.bin / "aria2c-real", FAKE_ARIA2C)
+    executable(env.bin / "aria2c", '#!/bin/sh\necho call >> "$SOURCE/calls"\n'
+               'if [ -s "$SOURCE/failures" ]; then sed -i 1d "$SOURCE/failures"; exit 1; fi\n'
+               'exec aria2c-real "$@"\n')
+
+
+def test_download_starts_aria2_again_after_a_failure(env):
+    failing_aria2c(env, 2)
+
+    result = env.run("m", RETRY_WAIT="0")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "VERIFIED m" in result.stdout
+    assert len((env.source / "calls").read_text().split()) == 3
+    assert "aria2 attempt 2 failed" in (env.models / "m" / "download.log").read_text()
+
+
+def test_download_stops_after_the_last_attempt(env):
+    failing_aria2c(env, 5)
+
+    result = env.run("m", ATTEMPTS="2", RETRY_WAIT="0")
+
+    assert result.returncode == 1
+    assert len((env.source / "calls").read_text().split()) == 2
+    assert "FAILED m: download not complete" in (env.models / "m" / "download.log").read_text()
 
 
 def test_download_gets_a_bad_file_again_once(env):
