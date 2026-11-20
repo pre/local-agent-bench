@@ -63,7 +63,7 @@ class Harness:
         self.state.mkdir()
         self.out = tmp_path / "out"
         self.env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE_PODMAN_DIR": str(self.state),
-                    "FAKE_PODMAN_STOP_S": "0.3", "PYTHONUNBUFFERED": "1"}
+                    "FAKE_PODMAN_STOP_S": "0.3"}  # no PYTHONUNBUFFERED: stdout is a block-buffered pipe
         self.processes: list[subprocess.Popen] = []
 
     def start(self, *args: str) -> subprocess.Popen:
@@ -170,7 +170,7 @@ def sighup(proc: subprocess.Popen) -> None:
     os.killpg(proc.pid, signal.SIGHUP)
 
 
-def assert_server_removed(h: Harness, proc: subprocess.Popen) -> None:
+def assert_server_removed(h: Harness, proc: subprocess.Popen, hint: str | None = None) -> None:
     assert proc.wait(timeout=30) == 130
     assert h.ended(["stop", "-t", "60", "llm-eval-server"])
     assert h.ended(["rm", "llm-eval-server"])
@@ -178,7 +178,12 @@ def assert_server_removed(h: Harness, proc: subprocess.Popen) -> None:
     assert (h.out / "server.log").read_text() == "fake llama-server log\n"
     run_log = (h.out / "run.log").read_text()
     assert "llm-eval-server is removed" in run_log
-    assert f"To continue: llm-eval run --resume {h.out}" in run_log
+    assert (hint or f"To continue: llm-eval run --resume {h.out}") in run_log
+
+
+def restart_hint(h: Harness, *args: str) -> str:
+    """Before the server is healthy, run.json does not exist and --resume does not work."""
+    return f"To start it again: llm-eval run --config {h.config} --out {h.out}" + "".join(f" {a}" for a in args)
 
 
 PHASES = {"server start": ServerStart(), "speed probe": SpeedProbe(), "trial": Trial()}
@@ -191,15 +196,37 @@ def test_stop_signal_stops_and_removes_the_server(harness, phase, stop):
 
     stop(proc)
 
-    assert_server_removed(harness, proc)
+    assert_server_removed(harness, proc, restart_hint(harness) if phase == "server start" else None)
 
 
-def test_ctrl_c_with_a_closed_pipe_stops_and_removes_the_server(harness):
+@pytest.mark.parametrize("unbuffered", [False, True])
+def test_ctrl_c_with_a_closed_pipe_stops_and_removes_the_server(harness, unbuffered):
+    if unbuffered:
+        harness.env["PYTHONUNBUFFERED"] = "1"
     proc = reach(harness, SpeedProbe())
 
     ctrl_c_with_tee(proc)
 
     assert_server_removed(harness, proc)
+
+
+def test_restart_hint_of_a_stop_during_the_server_start_works(harness):
+    phase = ServerStart()
+    phase.args = ["--task", "t1", "--reps", "1", "--probe", "speed", "--probe-target", "1000"]
+    proc = reach(harness, phase)
+    sigterm(proc)
+    hint = restart_hint(harness, *phase.args)
+    assert_server_removed(harness, proc, hint)
+    assert not (harness.out / "run.json").exists()
+    harness.llama.state.health_status = 200
+    harness.env["FAKE_PODMAN_AGENT_S"] = "0"
+
+    command = hint.split("To start it again: llm-eval ", 1)[1].split()
+    again = subprocess.run([str(LLM_EVAL), "--root", str(harness.root), *command],
+                           env=harness.env, stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
+
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert (harness.out / "run.json").exists() and (harness.out / "t1-r1" / "result.json").exists()
 
 
 def test_stop_signal_during_a_trial_removes_the_agent_container(harness):
@@ -234,3 +261,21 @@ def test_stop_messages_and_the_resume_hint_go_to_stderr(harness):
     assert proc.wait(timeout=30) == 130
     assert "llm-eval: stopping llm-eval-server" in output
     assert f"To continue: llm-eval run --resume {harness.out}" in output
+
+
+def test_signal_during_the_normal_stop_of_a_server_does_not_start_the_next(harness, tmp_path):
+    second = harness.root / "d.toml"
+    second.write_text(harness.config.read_text().replace('"stop-test"', '"stop-test-b"'))
+    harness.env.update(HOME=str(tmp_path / "home"), FAKE_PODMAN_AGENT_S="0", FAKE_PODMAN_STOP_S="1")
+    command = [str(LLM_EVAL), "--root", str(harness.root), "run", "--config", str(harness.config),
+               "--config", str(second)]
+    proc = subprocess.Popen(command, env=harness.env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+    harness.processes.append(proc)
+    wait_for(lambda: harness.started(["stop", "-t", "60", "llm-eval-server"]))
+
+    proc.send_signal(signal.SIGTERM)
+
+    assert proc.wait(timeout=30) == 130
+    assert len([c for c in harness.calls() if c["event"] == "start" and c["argv"][:2] == ["run", "-d"]]) == 1
+    assert harness.containers() == []

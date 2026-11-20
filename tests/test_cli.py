@@ -272,3 +272,18 @@ def test_replace_goes_to_the_server(root, fake, monkeypatch):
     assert seen["replace"] is True
     assert seen["podman"] is fake
     assert seen["out_dir"] == root / "o"
+
+
+def test_interrupt_before_run_json_tells_how_to_start_again(root, fake, monkeypatch, capsys):
+    def interrupt(*args, **kw):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "open_server", interrupt)
+    out = root / "o"
+
+    code = run(root, "--config", str(root / "c.toml"), "--out", str(out), "--tier", "quick", "--task", "t1",
+               "--reps", "2", "--probe", "speed", "--probe-target", "1000")
+
+    assert code == 130
+    assert (f"To start it again: llm-eval run --config {root / 'c.toml'} --out {out} --tier quick --task t1"
+            " --reps 2 --probe speed --probe-target 1000") in capsys.readouterr().err

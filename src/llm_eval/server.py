@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 from .config import MANAGED_CONTAINER, PROXY, Args, ServerConfig
 from .podman import Mount
 from .sampler import read_gtt_total_mib, read_gtt_used_mib
-from .stop import ignore_stop_signals, notice, start_thread
+from .stop import defer_stop_signals, notice, start_thread
 
 RELAY_DIR = "/run/llm-eval"
 PROXY_BASE_URL = "http://127.0.0.1:8080"
@@ -360,13 +360,15 @@ class ManagedServer(ExternalServer):
             }
             super().__enter__()
         except BaseException:
-            self._remove()
+            self._stop_server()
             raise
         return self
 
     def __exit__(self, *exc) -> None:
-        self._remove()
-        super().__exit__(*exc)
+        try:
+            self._stop_server()
+        finally:
+            super().__exit__(*exc)
 
     def describe(self) -> dict:
         return self.info
@@ -456,17 +458,27 @@ class ManagedServer(ExternalServer):
                                    "llama-server", "--version"])
         return next((line for line in out.splitlines() if "build" in line), None)
 
+    def _stop_server(self) -> None:
+        try:
+            self._remove()
+        except KeyboardInterrupt:  # the signal came before _remove deferred the signals
+            self._remove()
+            raise
+
     def _remove(self) -> None:
         """Stop the container, save its full log as server.log in the run directory, remove it.
-        A stop signal does not interrupt this, and a closed stderr does not stop it."""
-        if not self.started:
-            return
-        self.started = False
-        with ignore_stop_signals():
+        A stop signal does not interrupt this. A closed stderr or a full disk does not stop it."""
+        with defer_stop_signals():
+            if not self.started:
+                return
+            self.started = False
             notice(self.out_dir, f"llm-eval: stopping {MANAGED_CONTAINER}")
             self.podman.call(["stop", "-t", str(STOP_TIMEOUT_S), MANAGED_CONTAINER])
             _, log = self.podman.call(["logs", MANAGED_CONTAINER])
-            (self.out_dir / "server.log").write_text(log.replace(self.api_key(), "<redacted>"))
+            try:
+                (self.out_dir / "server.log").write_text(log.replace(self.api_key(), "<redacted>"))
+            except OSError as e:
+                notice(self.out_dir, f"llm-eval: could not save server.log: {e}")
             code, out = self.podman.call(["rm", MANAGED_CONTAINER])
             if code == 0:
                 notice(self.out_dir, f"llm-eval: {MANAGED_CONTAINER} is removed, its log is server.log")

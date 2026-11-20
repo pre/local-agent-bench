@@ -1,15 +1,18 @@
 import hashlib
+import json
 import os
 import signal
-import json
 import socket
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 from fakes import FakePodman
+from llm_eval import server as server_module
 from llm_eval.config import load_config
 from llm_eval.server import ManagedServer, ServerError, llama_server_args, open_server
+from llm_eval.stop import stop_on_signals
 from test_server import http_server  # noqa: F401  (fixture)
 
 NAME = "llm-eval-server"
@@ -312,16 +315,71 @@ def test_second_ctrl_c_does_not_stop_the_cleanup(repo, http_server, capsys):
 
     def call(args):
         if args[0] == "stop":
-            os.kill(os.getpid(), signal.SIGINT)  # uv run gives the harness a second SIGINT
+            os.kill(os.getpid(), signal.SIGINT)  # a second Ctrl-C
         return real_call(args)
 
     podman.call = call
 
-    with pytest.raises(KeyboardInterrupt):
-        with managed(repo, podman, url=http_server):
-            raise KeyboardInterrupt
+    with stop_on_signals():
+        with pytest.raises(KeyboardInterrupt):
+            with managed(repo, podman, url=http_server):
+                os.kill(os.getpid(), signal.SIGHUP)
+                sum(range(100))
 
     assert NAME not in podman.containers
     assert (repo / "run" / "server.log").exists()
     assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
     assert f"stopping {NAME}" in capsys.readouterr().err
+
+
+def test_server_stops_when_the_run_directory_cannot_be_written(repo, http_server):
+    podman = FakePodman()
+    (repo / "run").write_text("")  # a file, not a directory: run.log and server.log fail
+
+    with managed(repo, podman, url=http_server):
+        pass
+
+    assert ["stop", "-t", "60", NAME] in podman.calls
+    assert NAME not in podman.containers
+
+
+def test_signal_during_the_normal_cleanup_stops_the_run_after_it(repo, http_server):
+    podman = FakePodman()
+    real_call = podman.call
+
+    def call(args):
+        if args[0] == "stop":
+            os.kill(os.getpid(), signal.SIGTERM)
+        return real_call(args)
+
+    podman.call = call
+
+    with stop_on_signals():
+        with pytest.raises(KeyboardInterrupt, match="SIGTERM"):
+            with managed(repo, podman, url=http_server):
+                pass
+
+    assert NAME not in podman.containers
+    assert (repo / "run" / "server.log").exists()
+
+
+def test_signal_just_before_the_cleanup_defers_the_signals(repo, http_server, monkeypatch):
+    real_defer = server_module.defer_stop_signals
+    entered = []
+
+    @contextmanager
+    def defer_with_an_early_signal():
+        entered.append(1)
+        if len(entered) == 1:
+            raise KeyboardInterrupt("SIGTERM")  # the signal came before the block
+        with real_defer():
+            yield
+
+    monkeypatch.setattr(server_module, "defer_stop_signals", defer_with_an_early_signal)
+    podman = FakePodman()
+
+    with pytest.raises(KeyboardInterrupt):
+        with managed(repo, podman, url=http_server):
+            pass
+
+    assert NAME not in podman.containers

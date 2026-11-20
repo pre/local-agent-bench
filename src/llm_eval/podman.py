@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .stop import defer_stop_signals
+
 # The image user "eval" has UID 1000. keep-id maps it to the host user, so the
 # files that a container writes in a bind mount belong to the host user.
 USERNS = "--userns=keep-id:uid=1000,gid=1000"
@@ -67,15 +69,17 @@ class Podman:
                 stdin=subprocess.DEVNULL, stdout=out, stderr=err, env=env,
             )
             try:
-                code = proc.wait(timeout=timeout_s)
-                timed_out = False
-            except subprocess.TimeoutExpired:
-                subprocess.run([self.executable, "stop", "-t", "10", spec.name], capture_output=True)
-                code = proc.wait()
-                timed_out = True
-            except BaseException:  # a stop signal: the container must not continue without the harness
-                self.call(["rm", "-f", "-t", "10", "--ignore", spec.name])
-                proc.wait()
+                try:
+                    code = proc.wait(timeout=timeout_s)
+                    timed_out = False
+                except subprocess.TimeoutExpired:
+                    self.call(["stop", "-t", "10", spec.name])
+                    code = proc.wait()
+                    timed_out = True
+            except BaseException:  # a stop signal, also during the stop at the time limit
+                with defer_stop_signals():  # the container must not continue without the harness
+                    self.call(["rm", "-f", "-t", "10", "--ignore", spec.name])
+                    proc.wait()
                 raise
         return RunResult(code, timed_out, time.monotonic() - start)
 

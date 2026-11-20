@@ -11,7 +11,7 @@ import pytest
 
 from llm_eval.sampler import MemorySampler
 from llm_eval.server import UnixRelay
-from llm_eval.stop import STOP_SIGNALS, ignore_stop_signals, notice, start_thread, stop_on_signals
+from llm_eval.stop import STOP_SIGNALS, defer_stop_signals, flush_std_streams, notice, start_thread, stop_on_signals
 
 
 def blocked_signals(thread: threading.Thread) -> set[int]:
@@ -61,13 +61,53 @@ def test_an_ignored_signal_stays_ignored(monkeypatch):
         signal.signal(signal.SIGHUP, previous)
 
 
-def test_ignore_stop_signals_restores_the_handlers():
+def test_signal_in_a_deferred_block_stops_after_the_block():
+    done = []
     with stop_on_signals():
-        with ignore_stop_signals():
+        with pytest.raises(KeyboardInterrupt, match="SIGTERM"):
+            with defer_stop_signals():
+                os.kill(os.getpid(), signal.SIGTERM)
+                sum(range(100))
+                done.append("block")
+
+    assert done == ["block"]
+
+
+def test_signal_in_a_deferred_block_of_a_stop_is_dropped():
+    with stop_on_signals():
+        with pytest.raises(KeyboardInterrupt, match="SIGINT"):
+            os.kill(os.getpid(), signal.SIGINT)
+        with defer_stop_signals():  # the cleanup after the stop
             os.kill(os.getpid(), signal.SIGTERM)
-            assert all(signal.getsignal(s) is signal.SIG_IGN for s in STOP_SIGNALS)
-        with pytest.raises(KeyboardInterrupt):
-            os.kill(os.getpid(), signal.SIGTERM)
+            sum(range(100))
+
+
+def test_deferred_block_without_a_signal_does_not_raise():
+    with stop_on_signals():
+        with defer_stop_signals():
+            pass
+
+
+def test_signal_during_the_installation_of_the_handlers(monkeypatch):
+    real_signal = signal.signal
+    calls = []
+
+    def signal_with_a_kill(signum, handler):
+        calls.append(signum)
+        if len(calls) == 1:
+            # To the main thread: in the harness the other threads block the stop signals.
+            signal.pthread_kill(threading.main_thread().ident, signal.SIGTERM)  # pending until the end
+        return real_signal(signum, handler)
+
+    monkeypatch.setattr(signal, "signal", signal_with_a_kill)
+
+    with pytest.raises(KeyboardInterrupt, match="SIGTERM"):
+        with stop_on_signals():
+            pass
+
+    monkeypatch.undo()
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    assert signal.getsignal(signal.SIGHUP) == signal.getsignal(signal.SIGTERM) == signal.SIG_DFL
 
 
 class ClosedPipe(io.StringIO):
@@ -81,6 +121,14 @@ def test_notice_writes_run_log_when_stderr_is_a_closed_pipe(tmp_path, monkeypatc
     notice(tmp_path / "run", "llm-eval: stopping llm-eval-server")
 
     assert (tmp_path / "run" / "run.log").read_text().endswith(" llm-eval: stopping llm-eval-server\n")
+
+
+def test_notice_survives_a_run_log_that_cannot_be_written(tmp_path, capsys):
+    (tmp_path / "file").write_text("")
+
+    notice(tmp_path / "file" / "run", "llm-eval: stopping llm-eval-server")  # not a directory
+
+    assert "llm-eval: stopping llm-eval-server" in capsys.readouterr().err
 
 
 def test_started_thread_does_not_get_the_stop_signals():
@@ -106,3 +154,15 @@ def test_sampler_and_relay_threads_do_not_get_the_stop_signals(tmp_path):
     finally:
         relay.stop()
         sampler.stop()
+
+
+def test_flush_std_streams_sends_the_rest_of_a_closed_pipe_to_dev_null(monkeypatch):
+    read_end, write_end = os.pipe()
+    os.close(read_end)  # tee stopped
+    stream = open(write_end, "w")
+    stream.write("buffered text")
+    monkeypatch.setattr("sys.stdout", stream)
+
+    flush_std_streams()
+
+    stream.close()  # the rest goes to /dev/null, no BrokenPipeError

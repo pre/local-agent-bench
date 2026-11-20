@@ -51,11 +51,11 @@ At the first signal, the harness:
 1. Stops and removes the agent container of the running trial (`podman rm -f -t 10 --ignore llm-eval-agent-...`), when a trial runs.
 2. Stops the observers of the trial. The trial gets no `result.json`, thus `--resume` runs it again.
 3. Stops `llm-eval-server` (`podman stop -t 60`), saves its log as `server.log` in the run directory and removes the container.
-4. Writes `llm-eval: interrupted. To continue: llm-eval run --resume <run-dir>` and stops with exit code 130.
+4. Writes `llm-eval: interrupted. To continue: llm-eval run --resume <run-dir>` and stops with exit code 130, also when `tee` stopped. When the stop came before the server was healthy, `run.json` does not exist and `--resume` does not work. Then the line is `llm-eval: interrupted. To start it again: llm-eval run --config <file> --out <run-dir> <the other options>`.
 
 The same occurs during the server start, during the probes and during a trial. Some properties of the stop:
 
-- One signal is sufficient. More SIGINT, SIGTERM or SIGHUP signals do not interrupt the cleanup. A second Ctrl-C does not stop it. The cleanup takes up to 60 s for the server and 10 s for the agent container.
+- One signal is sufficient. More SIGINT, SIGTERM or SIGHUP signals do not interrupt the cleanup. A second Ctrl-C does not stop it. The cleanup takes up to 60 s for the server and 10 s for the agent container. A signal during the normal stop of a server (at the end of a configuration) does not interrupt that stop either. The run then stops after it, and the next configuration of `--config a --config b` does not start.
 - Python can lose the stop of a signal that arrives while Python deletes an object (the message "Exception ignored while calling deallocator ... KeyboardInterrupt"). Then the next signal stops the run. If `run.log` does not show `llm-eval: stopping llm-eval-server` after 15 s and `pgrep -af 'llm-eval run'` shows the harness, send `kill -TERM <PID>`.
 - Only the main thread of the harness gets the signals. Thus a signal also stops a probe request at once, which can otherwise wait up to 1800 s.
 - The podman commands of the cleanup run in a new process group. A signal of the terminal or of tmux does not stop them.

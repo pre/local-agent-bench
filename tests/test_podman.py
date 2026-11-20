@@ -110,27 +110,53 @@ def test_call_returns_exit_code_and_both_outputs(tmp_path):
     assert "out logs c1" in text and "err" in text
 
 
-def test_interrupted_run_removes_the_container(tmp_path, monkeypatch):
+def fake_podman_command(tmp_path: Path, monkeypatch, stop_s: float = 0) -> Path:
     exe = tmp_path / "podman"
     exe.write_text(f'#!/bin/sh\nexec {sys.executable} {Path(__file__).parent / "fake_podman.py"} "$@"\n')
     exe.chmod(0o755)
     monkeypatch.setenv("FAKE_PODMAN_DIR", str(tmp_path))
-    containers = tmp_path / "containers"
-    agent = spec(name="llm-eval-agent-t1-abc")
+    monkeypatch.setenv("FAKE_PODMAN_STOP_S", str(stop_s))
+    return exe
 
-    def interrupt_when_the_agent_runs():
-        while not (containers / f"{agent.name}.json").exists():
+
+def podman_calls(tmp_path: Path) -> list[dict]:
+    return [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text().splitlines()]
+
+
+def interrupt_when(condition) -> None:
+    def wait_and_interrupt():
+        while not condition():
             time.sleep(0.01)
         os.kill(os.getpid(), signal.SIGINT)
 
-    threading.Thread(target=interrupt_when_the_agent_runs, daemon=True).start()
-    with pytest.raises(KeyboardInterrupt):
-        Podman(str(exe)).run(agent, tmp_path / "o", tmp_path / "e", timeout_s=60)
+    threading.Thread(target=wait_and_interrupt, daemon=True).start()
 
-    calls = [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text().splitlines()]
-    removed = ["rm", "-f", "-t", "10", "--ignore", agent.name]
-    assert any(c["event"] == "end" and c["argv"] == removed and c["code"] == 0 for c in calls)
-    assert not (containers / f"{agent.name}.json").exists()
+
+AGENT = "llm-eval-agent-t1-abc"
+REMOVED = ["rm", "-f", "-t", "10", "--ignore", AGENT]
+
+
+def test_interrupted_run_removes_the_container(tmp_path, monkeypatch):
+    exe = fake_podman_command(tmp_path, monkeypatch)
+    interrupt_when(lambda: (tmp_path / "containers" / f"{AGENT}.json").exists())
+
+    with pytest.raises(KeyboardInterrupt):
+        Podman(str(exe)).run(spec(name=AGENT), tmp_path / "o", tmp_path / "e", timeout_s=60)
+
+    assert any(c["event"] == "end" and c["argv"] == REMOVED and c["code"] == 0 for c in podman_calls(tmp_path))
+    assert not (tmp_path / "containers" / f"{AGENT}.json").exists()
+
+
+def test_signal_during_the_stop_at_the_time_limit_removes_the_container(tmp_path, monkeypatch):
+    exe = fake_podman_command(tmp_path, monkeypatch, stop_s=2)
+    calls = tmp_path / "calls.jsonl"
+    interrupt_when(lambda: calls.exists() and '"argv": ["stop"' in calls.read_text())
+
+    with pytest.raises(KeyboardInterrupt):
+        Podman(str(exe)).run(spec(name=AGENT), tmp_path / "o", tmp_path / "e", timeout_s=0.3)
+
+    assert any(c["event"] == "end" and c["argv"] == REMOVED and c["code"] == 0 for c in podman_calls(tmp_path))
+    assert not (tmp_path / "containers" / f"{AGENT}.json").exists()
 
 
 def test_call_runs_podman_in_a_new_process_group(tmp_path, monkeypatch):

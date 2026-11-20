@@ -18,7 +18,7 @@ from .results import write_json
 from .sampler import MemorySampler
 from .selfcheck import selfcheck_task
 from .server import ServerError, open_server
-from .stop import notice, stop_on_signals
+from .stop import flush_std_streams, notice, stop_on_signals
 from .task import Task, TaskError, find_tasks
 from .trial import RunContext, execute_run, log, make_run_id, start_run, utc_now
 
@@ -35,10 +35,12 @@ TIER_TASKS = {
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        return args.func(args)
+        code = args.func(args)
     except (ConfigError, TaskError) as e:
         print(f"llm-eval: {e}", file=sys.stderr)
-        return 2
+        code = 2
+    flush_std_streams()
+    return code
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -205,11 +207,31 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
         print(f"llm-eval: {plan.config.name}: {e}", file=sys.stderr)
         return False
     except KeyboardInterrupt:
-        notice(out_dir, f"llm-eval: interrupted. To continue: llm-eval run --resume {out_dir}")
+        notice(out_dir, f"llm-eval: interrupted. {next_command(plan, args, out_dir)}")
         raise
     passed = sum(r["passed"] for r in results)
     print(f"results: {out_dir}  passed {passed}/{len(results)}")
     return True
+
+
+def next_command(plan: RunPlan, args: argparse.Namespace, out_dir: Path) -> str:
+    """The command that continues an interrupted run. Before the server is healthy,
+    run.json does not exist and --resume does not work: start the run again in the
+    same directory."""
+    if (out_dir / "run.json").exists():
+        return f"To continue: llm-eval run --resume {out_dir}"
+    options = ["--config", plan.config.path, "--out", out_dir]
+    if args.tier:
+        options += ["--tier", args.tier]
+    for task in args.tasks or []:
+        options += ["--task", task]
+    if args.reps:
+        options += ["--reps", args.reps]
+    if args.probe:
+        options += ["--probe", args.probe]
+    for target in args.probe_targets or []:
+        options += ["--probe-target", target]
+    return "To start it again: llm-eval run " + " ".join(map(str, options))
 
 
 def probe_run(ctx: RunContext, choice: str, targets: list[int] | None) -> bool:
@@ -270,18 +292,19 @@ def cmd_run(args: argparse.Namespace) -> int:
     plans = plan_runs(args)
     podman = Podman()
     scratch = Path(tempfile.mkdtemp(prefix="llm-eval-run-"))
-    with stop_on_signals():
-        try:
-            if not selfcheck_plans(podman, plans, scratch / "selfcheck"):
-                print("llm-eval: a task does not pass the selfcheck, no trials ran", file=sys.stderr)
-                return 1
-            ok = True
-            for plan in plans:
-                ok = run_plan(plan, podman, scratch, args) and ok
-        except KeyboardInterrupt:
-            return 130
-        finally:
-            shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        with stop_on_signals():
+            try:
+                if not selfcheck_plans(podman, plans, scratch / "selfcheck"):
+                    print("llm-eval: a task does not pass the selfcheck, no trials ran", file=sys.stderr)
+                    return 1
+                ok = True
+                for plan in plans:
+                    ok = run_plan(plan, podman, scratch, args) and ok
+            finally:
+                shutil.rmtree(scratch, ignore_errors=True)
+    except KeyboardInterrupt:
+        return 130
     return 0 if ok else 1
 
 

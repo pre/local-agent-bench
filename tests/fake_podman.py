@@ -134,7 +134,7 @@ def main(args: list[str]) -> int:
                 print(f"Error: container {name} is running", file=sys.stderr)
                 return 2
             stop(name)
-        path_of(name).unlink()
+        path_of(name).unlink(missing_ok=True)  # the fake agent can remove it first
         return 0
     print(f"fake podman: unknown command {args}", file=sys.stderr)
     return 125
