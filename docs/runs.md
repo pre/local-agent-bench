@@ -17,7 +17,7 @@
 - An exception in a trial gives a `result.json` with `failure_reason = "harness_error"`, the error in `failure_detail` and the traceback in `harness_error.txt`. The run continues with the next trial.
 - After each trial a progress line goes to stdout and to `run.log` in the run directory, for example `2026-11-19T18:20:01+00:00 [3/15] qwen38-base go-bugfix r3 FAIL verify_failed wall 878.2 s passed 1/3`.
 - `run --resume <run-dir>` (or `just resume <run-dir>`) continues a run that stopped. It reads the configuration, the tasks and the repetitions from `run.json`, and stops if the configuration file changed. It does not run trials that have a `result.json` again, and it removes the directory of a trial without `result.json` before it runs that trial again. Also a `harness_error` trial has a `result.json`. To run it again, remove its directory first.
-- After Ctrl-C the harness stops the server and shows the `--resume` command.
+- After a stop signal the harness stops the server and shows the `--resume` command (see "Stop a run" in [README.md](../README.md#stop-a-run)).
 
 ## Trial procedure
 

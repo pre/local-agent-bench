@@ -36,6 +36,56 @@ The justfile sets `TMPDIR` (default `~/tmp`) and the CA variables (`SSL_CERT_FIL
 | `src/llm_eval/` | The orchestrator. Standard library only |
 | `tests/` | Unit tests with fakes for podman and the server |
 
+## Stop a run
+
+Each of these signals stops a run:
+
+| Action | Signal |
+|---|---|
+| Ctrl-C in the terminal, or `tmux send-keys -t llm-eval C-c` | SIGINT to all processes of the terminal, also to `tee`. When the tmux pane then closes, tmux sends SIGHUP |
+| `kill <PID>` of `uv run` or of `llm-eval` | SIGTERM. `uv run` (version 0.13.6) sends SIGTERM and SIGHUP to the harness |
+| The terminal closes, `tmux kill-session`, the SSH connection stops | SIGHUP |
+
+At the first signal, the harness:
+
+1. Stops and removes the agent container of the running trial (`podman rm -f -t 10 --ignore llm-eval-agent-...`), when a trial runs.
+2. Stops the observers of the trial. The trial gets no `result.json`, thus `--resume` runs it again.
+3. Stops `llm-eval-server` (`podman stop -t 60`), saves its log as `server.log` in the run directory and removes the container.
+4. Writes `llm-eval: interrupted. To continue: llm-eval run --resume <run-dir>` and stops with exit code 130.
+
+The same occurs during the server start, during the probes and during a trial. Some properties of the stop:
+
+- One signal is sufficient. More SIGINT, SIGTERM or SIGHUP signals do not interrupt the cleanup. A second Ctrl-C does not stop it. The cleanup takes up to 60 s for the server and 10 s for the agent container.
+- Python can lose the stop of a signal that arrives while Python deletes an object (the message "Exception ignored while calling deallocator ... KeyboardInterrupt"). Then the next signal stops the run. If `run.log` does not show `llm-eval: stopping llm-eval-server` after 15 s and `pgrep -af 'llm-eval run'` shows the harness, send `kill -TERM <PID>`.
+- Only the main thread of the harness gets the signals. Thus a signal also stops a probe request at once, which can otherwise wait up to 1800 s.
+- The podman commands of the cleanup run in a new process group. A signal of the terminal or of tmux does not stop them.
+- The messages of the cleanup go to stderr and to `run.log` in the run directory. In `... 2>&1 | tee -a <log>`, Ctrl-C also stops `tee`. Then the messages are only in `run.log`, not in `<log>`. Use `tee -i -a <log>`: `tee` then ignores SIGINT, `<log>` also gets the messages, and the tmux pane stays open until the harness stops.
+- `kill -KILL` stops the harness before its cleanup. Use it only when the harness does not stop in 2 minutes. Then do the manual cleanup below.
+- When SIGHUP or SIGINT is ignored at the start (`nohup`, a background job of a shell script), the harness keeps it ignored.
+
+After a stop, do these checks:
+
+```sh
+tail -n 3 <run-dir>/run.log   # "llm-eval-server is removed, its log is server.log" and the --resume line
+ls -l <run-dir>/server.log
+podman ps -a --filter label=llm-eval.role=server --format '{{.Names}} {{.Status}}'   # no line
+podman ps -a --filter name=llm-eval-agent- --format '{{.Names}} {{.Status}}'         # no line
+pgrep -af 'llm-eval run'      # no line
+awk '{printf "%d MiB\n",$1/1048576}' /sys/class/drm/card*/device/mem_info_gtt_used   # GTT is free again
+```
+
+Manual cleanup, only when one of the checks shows a remaining container:
+
+```sh
+podman stop -t 60 llm-eval-server
+podman logs llm-eval-server > <run-dir>/server.log 2>&1
+grep -cF -f ~/.config/llama-server/api-key <run-dir>/server.log   # 0: the log does not contain the key
+podman rm llm-eval-server
+podman rm -f -t 10 <llm-eval-agent-... name>
+```
+
+Remove only containers with the name `llm-eval-server` (label `llm-eval.role=server`) or `llm-eval-agent-*`. Never remove other containers.
+
 ## Image
 
 `just image` copies the Claude Code binary of the host (`~/.local/share/claude/versions/<version>`) into the image and checks it by SHA-256. `CLAUDE_VERSION` selects the version, default 2.1.328. The base images (`golang:1.27`, `rust`) are pinned by digest. The yq binary is pinned by version and SHA-256. The Debian packages (jq, ripgrep, shellcheck, socat) come from Debian 13 and can get security updates in a rebuild.
