@@ -1,10 +1,12 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from fakes import FakePodman, check_by_marker
 from llm_eval import cli
 from llm_eval.server import ExternalServer, ServerError
+from llm_eval.stop import GuardStop
 from llm_eval.config import load_config
 from test_config import EXTERNAL, write
 from test_results import RESULT_OK
@@ -231,16 +233,16 @@ def test_resume_and_config_exclude_each_other(root, fake):
 def test_server_error_of_one_config_does_not_stop_the_next(root, fake, monkeypatch, capsys):
     monkeypatch.setattr(cli, "DEFAULT_OUT", root / "evidence")
     (root / "d.toml").write_text((root / "c.toml").read_text().replace('"local-test"', '"other"'))
-    real = cli.open_server
+    real = ExternalServer.__enter__
 
-    def open_server(cfg, *args, **kw):
-        if cfg.url.endswith(":8080") and open_server.first:
-            open_server.first = False
+    def enter(self):  # the start of the server
+        if enter.first:
+            enter.first = False
             raise ServerError("GTT used is too high")
-        return real(cfg, *args, **kw)
+        return real(self)
 
-    open_server.first = True
-    monkeypatch.setattr(cli, "open_server", open_server)
+    enter.first = True
+    monkeypatch.setattr(ExternalServer, "__enter__", enter)
 
     assert run(root, "--config", str(root / "c.toml"), "--config", str(root / "d.toml")) == 1
 
@@ -278,7 +280,7 @@ def test_interrupt_before_run_json_tells_how_to_start_again(root, fake, monkeypa
     def interrupt(*args, **kw):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "open_server", interrupt)
+    monkeypatch.setattr(ExternalServer, "__enter__", interrupt)  # a stop signal during the start of the server
     out = root / "o"
 
     code = run(root, "--config", str(root / "c.toml"), "--out", str(out), "--tier", "quick", "--task", "t1",
@@ -287,3 +289,106 @@ def test_interrupt_before_run_json_tells_how_to_start_again(root, fake, monkeypa
     assert code == 130
     assert (f"To start it again: llm-eval run --config {root / 'c.toml'} --out {out} --tier quick --task t1"
             " --reps 2 --probe speed --probe-target 1000") in capsys.readouterr().err
+
+
+TRIP = {"reason": "gtt_margin", "limit_mib": 4096, "gtt_used_mib": 109000, "gtt_total_mib": 112640,
+        "mem_available_mib": 20000, "phase": "trial t1-r1", "time": "2026-11-23T02:00:00+00:00"}
+
+
+@pytest.fixture
+def servers(monkeypatch):
+    """The servers that the run opens, one for each configuration."""
+    opened = []
+    real = cli.open_server
+
+    def open_server(cfg, *args, **kw):
+        opened.append(real(cfg, *args, **kw))
+        return opened[-1]
+
+    monkeypatch.setattr(cli, "open_server", open_server)
+    return opened
+
+
+def trip(server, phase: str) -> None:
+    """What the memory guard of a managed server does, for an external server of a test."""
+    assert server.phase == phase
+    server.guard = SimpleNamespace(trip={**TRIP, "phase": phase})
+    raise GuardStop
+
+
+def run_dirs(root) -> dict[str, object]:
+    return {d.name.split("-", 1)[1]: d for d in (root / "evidence").iterdir()}
+
+
+def test_memory_guard_stops_its_configuration_and_the_next_runs(root, fake, servers, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "DEFAULT_OUT", root / "evidence")
+    (root / "d.toml").write_text((root / "c.toml").read_text().replace('"local-test"', '"other"'))
+    phases = []
+    monkeypatch.setattr(ExternalServer, "check_health", lambda self: phases.append(self.phase))
+    agent = fake.behaviours["agent"]
+
+    def agent_with_a_trip(spec, mounts):
+        if len(servers) == 1:
+            trip(servers[0], "trial t1-r1")
+        return agent(spec, mounts)
+
+    fake.behaviours["agent"] = agent_with_a_trip
+
+    code = run(root, "--config", str(root / "c.toml"), "--config", str(root / "d.toml"))
+
+    assert code == cli.GUARD_EXIT == 3
+    dirs = run_dirs(root)
+    assert json.loads((dirs["local-test"] / "run.json").read_text())["memory_guard"] == TRIP
+    assert not (dirs["local-test"] / "t1-r1" / "result.json").exists()
+    assert (dirs["other"] / "t1-r1" / "result.json").exists()
+    assert "memory_guard" not in json.loads((dirs["other"] / "run.json").read_text())
+    assert phases == ["start", "between trials", "start", "between trials"]
+    message = (f"llm-eval: local-test: the memory guard stopped the run of this configuration. The trial in"
+               f" progress has no result. To continue: llm-eval run --resume {dirs['local-test']}")
+    assert message in capsys.readouterr().err
+    assert message in (dirs["local-test"] / "run.log").read_text()
+
+    assert run(root, "--resume", str(dirs["local-test"])) == 0
+
+    assert (dirs["local-test"] / "t1-r1" / "result.json").exists()
+    assert json.loads((dirs["local-test"] / "run.json").read_text())["memory_guard"] == TRIP
+
+
+def test_memory_guard_during_the_probes(root, fake, servers, monkeypatch):
+    monkeypatch.setattr(cli, "probe_run", lambda ctx, choice, targets: trip(ctx.server, "probes"))
+    out = root / "o"
+
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out), "--probe", "protocol") == 3
+
+    assert json.loads((out / "run.json").read_text())["memory_guard"]["phase"] == "probes"
+    assert not (out / "t1-r1").exists()
+
+
+def test_memory_guard_before_run_json_tells_how_to_start_again(root, fake, servers, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "start_run", lambda ctx, *args, **kw: trip(ctx.server, "start"))
+    out = root / "o"
+
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out)) == 3
+
+    assert not (out / "run.json").exists()
+    assert f"To start it again: llm-eval run --config {root / 'c.toml'} --out {out}" in capsys.readouterr().err
+
+
+def test_stop_signal_after_a_guard_trip_records_the_trip(root, fake, servers, monkeypatch, capsys):
+    def interrupt(ctx, *args):
+        ctx.server.guard = SimpleNamespace(trip=TRIP)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "execute_run", interrupt)
+    out = root / "o"
+
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out)) == 130
+
+    assert json.loads((out / "run.json").read_text())["memory_guard"] == TRIP
+    assert f"interrupted. To continue: llm-eval run --resume {out}" in capsys.readouterr().err
+
+
+def test_external_server_has_no_memory_guard(root, fake, servers):
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(root / "o")) == 0
+
+    assert servers[0].guard is None

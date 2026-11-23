@@ -255,6 +255,7 @@ def execute_run(ctx: RunContext, tasks: list[Task], reps: int, run_info: dict) -
     run_file = ctx.out_dir / "run.json"
     trials = [(task, rep) for task in tasks for rep in range(1, reps + 1)]
     log(ctx, f"{utc_now()} run {ctx.run_id}: {len(trials)} trials, server {ctx.server.cfg.url}")
+    ctx.server.phase = "between trials"
     results = []
     for task, rep in trials:
         trial_dir = trial_dir_of(ctx, task, rep)
@@ -263,11 +264,13 @@ def execute_run(ctx: RunContext, tasks: list[Task], reps: int, run_info: dict) -
             continue
         shutil.rmtree(trial_dir, ignore_errors=True)  # an incomplete trial of an interrupted run
         ctx.server.check_health()
+        ctx.server.phase = f"trial {trial_dir.name}"
         started = utc_now()
         try:
             result = run_trial(ctx, task, rep)
         except Exception as e:
             result = error_result(ctx, task, rep, e, started)
+        ctx.server.phase = "between trials"
         results.append(result)
         passed = sum(r["passed"] for r in results)
         verdict = "PASS" if result["passed"] else f"FAIL {result['failure_reason']}"

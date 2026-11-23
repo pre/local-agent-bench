@@ -18,11 +18,12 @@ from .results import write_json
 from .sampler import MemorySampler
 from .selfcheck import selfcheck_task
 from .server import ServerError, open_server
-from .stop import flush_std_streams, notice, stop_on_signals
+from .stop import GuardStop, flush_std_streams, notice, stop_on_signals
 from .task import Task, TaskError, find_tasks
 from .trial import RunContext, execute_run, log, make_run_id, start_run, utc_now
 
 DEFAULT_OUT = Path.home() / "daybook-evidence" / "local-llm" / "eval"
+GUARD_EXIT = 3  # the memory guard stopped the run of a configuration
 TIER_REPS = {"quick": 1, "base": 1, "hard": 1, "full": 3}
 TIER_TASKS = {
     "quick": lambda task: task.quick,
@@ -187,31 +188,52 @@ def selfcheck_plans(podman, plans: list[RunPlan], scratch: Path) -> bool:
     return ok
 
 
-def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> bool:
-    """Start the server, run the trials, stop the server. Return False on a server error,
-    a probe error or a stop of the probe gate."""
+def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> int:
+    """Start the server, run the trials, stop the server. Return the exit code of the
+    run: 1 on a server error, a probe error or a stop of the probe gate, GUARD_EXIT
+    when the memory guard stopped the run."""
     run_id = plan.run_id or make_run_id(plan.config.name)
     out_dir = plan.out_dir or DEFAULT_OUT / run_id
     print(f"run {run_id}: {out_dir}")
+    server = open_server(plan.config.server, scratch / run_id, podman=podman, root=args.root, out_dir=out_dir,
+                         replace=args.replace)
     try:
-        with open_server(plan.config.server, scratch / run_id, podman=podman, root=args.root, out_dir=out_dir,
-                         replace=args.replace) as server:
+        with server:
             server.check_health()
             observers = make_observers(plan.config.server, podman)
             ctx = RunContext(run_id, out_dir, plan.config, args.root, podman, server, observers)
             run_info = start_run(ctx, plan.tasks, plan.reps, resume=plan.resume)
-            if args.probe and not probe_run(ctx, args.probe, args.probe_targets):
-                return False
+            if args.probe:
+                server.phase = "probes"
+                if not probe_run(ctx, args.probe, args.probe_targets):
+                    return 1
             results = execute_run(ctx, plan.tasks, plan.reps, run_info)
     except (ServerError, probe.ProbeError) as e:
         print(f"llm-eval: {plan.config.name}: {e}", file=sys.stderr)
-        return False
+        return 1
+    except GuardStop:
+        record_guard_trip(out_dir, server.guard.trip)
+        notice(out_dir, f"llm-eval: {plan.config.name}: the memory guard stopped the run of this configuration."
+                        f" The trial in progress has no result. {next_command(plan, args, out_dir)}")
+        return GUARD_EXIT
     except KeyboardInterrupt:
+        if server.guard and server.guard.trip:  # the guard tripped during the cleanup of the stop, or before it
+            record_guard_trip(out_dir, server.guard.trip)
         notice(out_dir, f"llm-eval: interrupted. {next_command(plan, args, out_dir)}")
         raise
     passed = sum(r["passed"] for r in results)
     print(f"results: {out_dir}  passed {passed}/{len(results)}")
-    return True
+    return 0
+
+
+def record_guard_trip(out_dir: Path, trip: dict) -> None:
+    """Write the trip of the memory guard to run.json. Before run.json exists, the
+    record is only the message in run.log."""
+    run_file = out_dir / "run.json"
+    if run_file.exists():
+        info = json.loads(run_file.read_text())
+        info["memory_guard"] = trip
+        write_json(run_file, info)
 
 
 def next_command(plan: RunPlan, args: argparse.Namespace, out_dir: Path) -> str:
@@ -298,14 +320,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                 if not selfcheck_plans(podman, plans, scratch / "selfcheck"):
                     print("llm-eval: a task does not pass the selfcheck, no trials ran", file=sys.stderr)
                     return 1
-                ok = True
+                code = 0
                 for plan in plans:
-                    ok = run_plan(plan, podman, scratch, args) and ok
+                    code = max(code, run_plan(plan, podman, scratch, args))  # GUARD_EXIT is more than 1
             finally:
                 shutil.rmtree(scratch, ignore_errors=True)
     except KeyboardInterrupt:
         return 130
-    return 0 if ok else 1
+    return code
 
 
 def _load_runs(dirs: list[Path]) -> list:
