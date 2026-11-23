@@ -26,15 +26,13 @@ GUARD_INTERVAL_S = 1.0
 Reader = Callable[[], int]
 
 
-def trip_message(trip: dict) -> str:
-    """The message of a trip: the condition and its values."""
+def trip_condition(trip: dict) -> str:
+    """The condition of a trip with its values."""
     if trip["reason"] == "gtt_margin":
-        values = (f"GTT used is {trip['gtt_used_mib']} MiB of {trip['gtt_total_mib']} MiB, less free than"
-                  f" server.gtt_min_margin_mib = {trip['limit_mib']} MiB")
-    else:
-        values = (f"MemAvailable is {trip['mem_available_mib']} MiB, less than"
-                  f" server.mem_available_min_mib = {trip['limit_mib']} MiB")
-    return f"MEMORY GUARD: {values} ({trip['phase']}). The harness killed {MANAGED_CONTAINER}."
+        return (f"GTT used is {trip['gtt_used_mib']} MiB of {trip['gtt_total_mib']} MiB, less free than"
+                f" server.gtt_min_margin_mib = {trip['limit_mib']} MiB")
+    return (f"MemAvailable is {trip['mem_available_mib']} MiB, less than"
+            f" server.mem_available_min_mib = {trip['limit_mib']} MiB")
 
 
 class MemoryGuard:
@@ -66,7 +64,8 @@ class MemoryGuard:
             if self.trip:
                 send_guard_signal()
                 self.podman.call(["kill", "-s", "KILL", MANAGED_CONTAINER])
-                notice(self.out_dir, f"llm-eval: {trip_message(self.trip)}")
+                notice(self.out_dir, f"llm-eval: MEMORY GUARD: {trip_condition(self.trip)} ({self.trip['phase']})."
+                                     f" The harness killed {MANAGED_CONTAINER}.")
                 return
             if self.stopping.wait(self.interval_s):
                 return

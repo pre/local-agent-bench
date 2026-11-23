@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 
+from .guard import trip_condition
+
 HARNESS_ERROR = "harness_error"
 Z95 = 1.96
 
@@ -367,6 +369,13 @@ def _memory_table(rows: list[ConfigStats]) -> list[str]:
     return ["## Memory", ""] + _table(header, body) + ["", " ".join(text)]
 
 
+def _guard_trips(runs: list[Run]) -> list[str]:
+    """A line for each run that the memory guard stopped. An older run.json has no memory_guard."""
+    lines = [f"- `{run.id}`, {trip['time']}, {trip['phase']}: {trip_condition(trip)}."
+             for run in runs if (trip := run.info.get("memory_guard"))]
+    return ["", "The memory guard killed the server of these runs:", ""] + lines if lines else []
+
+
 def _matrix_cell(trials: list[dict]) -> str:
     if not trials:
         return "-"
@@ -465,10 +474,11 @@ def _probes(runs: list[Run]) -> list[str]:
 def render_report(runs: list[Run]) -> str:
     lines = ["# Evaluation report", ""] + _runs_section(runs)
     rows = config_stats(runs)
+    trips = _guard_trips(runs)
     if rows:
-        lines += [""] + _config_table(rows) + [""] + _memory_table(rows) + [""] + _matrix(rows) + [""] + \
+        lines += [""] + _config_table(rows) + [""] + _memory_table(rows) + trips + [""] + _matrix(rows) + [""] + \
             _failures(rows) + [""] + _limits(rows)
     else:
-        lines += ["", "No trial results."]
+        lines += ["", "No trial results."] + (["", "## Memory"] + trips if trips else [])
     lines += _probes(runs)
     return "\n".join(lines) + "\n"

@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from llm_eval.compare import compare_runs
 from llm_eval.report import config_stats, load_run, render_report, sign_test, wilson
 from runfiles import SHA_A, SHA_B, memory, server, trial, write_run
 
@@ -393,3 +394,33 @@ def test_report_of_old_results_without_cancelled_values_has_no_note(tmp_path):
     text = render_report([load_run(write_run(tmp_path / "r", [trial("t1", server=server(100, 2.0, 300, 20.0))]))])
 
     assert "cancelled" not in text
+
+
+GUARD = {"reason": "gtt_margin", "limit_mib": 4096, "gtt_used_mib": 109000, "gtt_total_mib": 112640,
+         "mem_available_mib": 20480, "phase": "trial t2-r1", "time": "2026-11-24T02:14:07+00:00"}
+
+
+def test_memory_section_names_the_runs_that_the_memory_guard_stopped(tmp_path):
+    stopped = write_run(tmp_path / "stopped", [trial("t1", memory=memory(84000, 30000, 8000))], tasks=["t1", "t2"],
+                        finished=False, server=MANAGED, memory_guard=GUARD)
+    old = write_run(tmp_path / "old", [trial("t1", memory=memory(84000, 30000, 8000))], server=MANAGED)
+
+    text = render_report([load_run(stopped), load_run(old)])
+
+    memory_section = text.split("## Memory", 1)[1].split("\n## ", 1)[0]
+    assert ("- `stopped`, 2026-11-24T02:14:07+00:00, trial t2-r1: GTT used is 109000 MiB of 112640 MiB, less free"
+            " than server.gtt_min_margin_mib = 4096 MiB.") in memory_section
+    assert "`old`" not in memory_section
+    assert "- `stopped` (c1): PARTIAL, 1 of 2 trials" in text
+    assert compare_runs(load_run(stopped), load_run(old))
+
+
+def test_memory_guard_of_a_run_without_trial_results(tmp_path):
+    guard = {**GUARD, "reason": "mem_available", "limit_mib": 2048, "mem_available_mib": 1500, "phase": "probes"}
+    run = load_run(write_run(tmp_path / "r", [], tasks=["t1"], finished=False, server=MANAGED, memory_guard=guard))
+
+    text = render_report([run])
+
+    assert "No trial results." in text
+    assert ("## Memory\n\nThe memory guard killed the server of these runs:\n\n- `r`, 2026-11-24T02:14:07+00:00,"
+            " probes: MemAvailable is 1500 MiB, less than server.mem_available_min_mib = 2048 MiB.") in text

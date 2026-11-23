@@ -8,7 +8,7 @@ import pytest
 
 from fakes import FakePodman
 from llm_eval.config import ManagedConfig
-from llm_eval.guard import MemoryGuard, trip_message
+from llm_eval.guard import MemoryGuard
 from llm_eval.sampler import read_mem_available_mib
 from llm_eval.stop import GuardStop, defer_stop_signals, stop_on_signals
 from test_sampler import FakeHost, host  # noqa: F401  (fixture)
@@ -151,14 +151,6 @@ def test_unreadable_gtt_gives_one_warning_and_no_trip(tmp_path):
     assert "the memory guard cannot read a memory value: [Errno 5] Input/output error" in log
     assert guard.trip["reason"] == "mem_available"
     assert guard.trip["gtt_used_mib"] is None
-
-
-def test_trip_message_of_a_record_without_a_value():
-    trip = {"reason": "mem_available", "limit_mib": 2048, "gtt_used_mib": None, "gtt_total_mib": None,
-            "mem_available_mib": 1500, "phase": "probes", "time": "2026-11-23T02:00:00+00:00"}
-
-    assert trip_message(trip) == ("MEMORY GUARD: MemAvailable is 1500 MiB, less than server.mem_available_min_mib"
-                                  " = 2048 MiB (probes). The harness killed llm-eval-server.")
 
 
 def test_read_mem_available(host):

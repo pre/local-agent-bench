@@ -41,7 +41,7 @@ def memory(gtt_peak: int, mem_min: int, swap_min: int, gtt_start: int = 1000, ps
 
 def write_run(run_dir: Path, trials: list[dict], tasks: list[str] | None = None, reps: int = 1,
               finished: bool = True, name: str | None = None, sha: str | None = None,
-              server: dict | None = None, probe_memory: dict | None = None) -> Path:
+              server: dict | None = None, probe_memory: dict | None = None, memory_guard: dict | None = None) -> Path:
     run_dir.mkdir(parents=True)
     first = trials[0]["config"] if trials else {"name": "c1", "sha256": SHA_A}
     info = {
@@ -55,6 +55,8 @@ def write_run(run_dir: Path, trials: list[dict], tasks: list[str] | None = None,
         info["finished_at"] = "2026-11-19T11:00:00+00:00"
     if server:
         info["server"] = server
+    if memory_guard:
+        info["memory_guard"] = memory_guard
     (run_dir / "run.json").write_text(json.dumps(info))
     if probe_memory:
         (run_dir / "probes").mkdir()
