@@ -18,7 +18,7 @@ from .results import write_json
 from .sampler import MemorySampler
 from .selfcheck import selfcheck_task
 from .server import ServerError, open_server
-from .stop import GuardStop, flush_std_streams, notice, stop_on_signals
+from .stop import GuardStop, end_guard_stop, flush_std_streams, notice, stop_on_signals
 from .task import Task, TaskError, find_tasks
 from .trial import RunContext, execute_run, log, make_run_id, start_run, utc_now
 
@@ -215,6 +215,7 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
         record_guard_trip(out_dir, server.guard.trip)
         notice(out_dir, f"llm-eval: {plan.config.name}: the memory guard stopped the run of this configuration."
                         f" The trial in progress has no result. {next_command(plan, args, out_dir)}")
+        end_guard_stop()  # a stop signal of the cleanup raises KeyboardInterrupt here: cmd_run gives 130
         return GUARD_EXIT
     except KeyboardInterrupt:
         if server.guard and server.guard.trip:  # the guard tripped during the cleanup of the stop, or before it

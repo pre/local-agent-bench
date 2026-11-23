@@ -64,5 +64,5 @@ Then the harness continues with the next configuration of `--config a --config b
 Other rules:
 
 - When the guard cannot read a value (for example an error of sysfs), that value does not trip it. The other values still do. The first such error gives one warning in `run.log` and on stderr.
-- A stop signal during the cleanup of a trip stops the full run: the exit code is 130 and the next configuration does not start. A trip during the cleanup of a stop signal kills the server, and the stop continues. In the two cases `run.json` gets `memory_guard`.
+- A stop signal during the cleanup of a trip does not interrupt the cleanup, the same as a second stop signal. After the cleanup and the line above, it stops the full run: the exit code is 130 and the next configuration does not start. A trip during the cleanup of a stop signal kills the server, and the stop continues. In the two cases `run.json` gets `memory_guard`.
 - An external or remote server has no guard: the harness did not start it and does not stop it.

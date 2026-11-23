@@ -5,11 +5,14 @@ import stat
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+from llm_eval import podman as podman_module
 from llm_eval.podman import ContainerSpec, Mount, Podman, run_args
+from llm_eval.stop import GuardStop, end_guard_stop, send_guard_signal, stop_on_signals
 
 
 def spec(**kw) -> ContainerSpec:
@@ -165,3 +168,33 @@ def test_call_runs_podman_in_a_new_process_group(tmp_path, monkeypatch):
     code, text = Podman(str(exe)).call(["ps"])
 
     assert int(text) != os.getpgid(0)
+
+
+def test_stop_signal_just_after_a_guard_stop_removes_the_container(tmp_path, monkeypatch):
+    exe = fake_podman_command(tmp_path, monkeypatch)
+    real_defer = podman_module.defer_stop_signals
+
+    @contextmanager
+    def defer_after_a_stop_signal():
+        signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)  # before the cleanup defers the signals
+        with real_defer():
+            yield
+
+    monkeypatch.setattr(podman_module, "defer_stop_signals", defer_after_a_stop_signal)
+    container = tmp_path / "containers" / f"{AGENT}.json"
+
+    with stop_on_signals():
+        threading.Thread(target=guard_signal_when, args=(container.exists,), daemon=True).start()
+        with pytest.raises(GuardStop):
+            Podman(str(exe)).run(spec(name=AGENT), tmp_path / "o", tmp_path / "e", timeout_s=60)
+        with pytest.raises(KeyboardInterrupt, match="SIGINT"):
+            end_guard_stop()
+
+    assert any(c["event"] == "end" and c["argv"] == REMOVED and c["code"] == 0 for c in podman_calls(tmp_path))
+    assert not container.exists()
+
+
+def guard_signal_when(condition) -> None:
+    while not condition():
+        time.sleep(0.01)
+    send_guard_signal()

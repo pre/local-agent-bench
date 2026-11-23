@@ -362,7 +362,10 @@ def test_stop_signal_during_the_cleanup_of_the_memory_guard(harness, tmp_path):
     ctrl_c_in_tmux(proc)
 
     assert_guard_stopped_the_run(harness, proc, tripped, 130, "trial t1-r1")
-    assert f"interrupted. To continue: llm-eval run --resume {harness.out}" in (harness.out / "run.log").read_text()
+    run_log = (harness.out / "run.log").read_text()
+    assert f"the memory guard stopped the run of this configuration. The trial in progress has no result. To continue:" \
+           f" llm-eval run --resume {harness.out}" in run_log  # after the full cleanup, then the stop of the run
+    assert run_log.index("llm-eval-server is removed") < run_log.index("the memory guard stopped the run")
 
 
 def test_memory_guard_trip_during_the_cleanup_of_a_stop_signal(harness, tmp_path):

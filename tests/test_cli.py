@@ -1,4 +1,6 @@
 import json
+import os
+import signal
 from types import SimpleNamespace
 
 import pytest
@@ -6,7 +8,7 @@ import pytest
 from fakes import FakePodman, check_by_marker
 from llm_eval import cli
 from llm_eval.server import ExternalServer, ServerError
-from llm_eval.stop import GuardStop
+from llm_eval.stop import send_guard_signal
 from llm_eval.config import load_config
 from test_config import EXTERNAL, write
 from test_results import RESULT_OK
@@ -313,7 +315,7 @@ def trip(server, phase: str) -> None:
     """What the memory guard of a managed server does, for an external server of a test."""
     assert server.phase == phase
     server.guard = SimpleNamespace(trip={**TRIP, "phase": phase})
-    raise GuardStop
+    send_guard_signal()
 
 
 def run_dirs(root) -> dict[str, object]:
@@ -392,3 +394,21 @@ def test_external_server_has_no_memory_guard(root, fake, servers):
     assert run(root, "--config", str(root / "c.toml"), "--out", str(root / "o")) == 0
 
     assert servers[0].guard is None
+
+
+def test_stop_signal_during_the_cleanup_of_a_guard_trip(root, fake, servers, monkeypatch, capsys):
+    class SamplerWithAStopSignal(FakeSampler):
+        def stop(self):
+            os.kill(os.getpid(), signal.SIGHUP)  # the observers stop in the cleanup of the trip
+            return super().stop()
+
+    monkeypatch.setattr(cli, "MemorySampler", SamplerWithAStopSignal)
+    fake.behaviours["agent"] = lambda spec, mounts: trip(servers[0], "trial t1-r1")
+    out = root / "o"
+
+    code = run(root, "--config", str(root / "c.toml"), "--out", str(out))
+
+    assert code == 130
+    assert json.loads((out / "run.json").read_text())["memory_guard"]["phase"] == "trial t1-r1"
+    assert ("the memory guard stopped the run of this configuration. The trial in progress has no result."
+            f" To continue: llm-eval run --resume {out}") in capsys.readouterr().err

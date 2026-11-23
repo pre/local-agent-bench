@@ -13,7 +13,7 @@ from fakes import FakePodman
 from llm_eval import server as server_module
 from llm_eval.config import load_config
 from llm_eval.server import ManagedServer, ServerError, llama_server_args, open_server
-from llm_eval.stop import GuardStop, stop_on_signals
+from llm_eval.stop import GuardStop, end_guard_stop, send_guard_signal, stop_on_signals
 from test_server import http_server  # noqa: F401  (fixture)
 
 NAME = "llm-eval-server"
@@ -447,3 +447,30 @@ def test_memory_guard_trip_at_the_healthy_start_removes_the_server(repo, http_se
     assert server.guard.trip["phase"] == "start"
     assert server.guard.trip["mem_available_mib"] == 50000
     assert server.guard.trip["limit_mib"] == 60000
+
+
+def test_stop_signal_after_a_guard_stop_before_the_cleanup_removes_the_server(repo, http_server, monkeypatch):
+    real_remove = ManagedServer._remove
+    calls = []
+
+    def remove(self):
+        calls.append(1)
+        if len(calls) == 1:
+            send_guard_signal()  # the guard trips before _remove defers the signals
+            sum(range(100))
+        os.kill(os.getpid(), signal.SIGINT)  # a stop signal before the second try defers the signals
+        sum(range(100))
+        real_remove(self)
+
+    monkeypatch.setattr(ManagedServer, "_remove", remove)
+    podman = FakePodman()
+
+    with stop_on_signals():
+        with pytest.raises(GuardStop):
+            with managed(repo, podman, url=http_server):
+                pass
+        with pytest.raises(KeyboardInterrupt, match="SIGINT"):
+            end_guard_stop()
+
+    assert NAME not in podman.containers
+    assert (repo / "run" / "server.log").exists()

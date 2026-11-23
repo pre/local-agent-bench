@@ -11,8 +11,8 @@ import pytest
 
 from llm_eval.sampler import MemorySampler
 from llm_eval.server import UnixRelay
-from llm_eval.stop import (GUARD_SIGNAL, STOP_SIGNALS, GuardStop, defer_stop_signals, flush_std_streams, notice,
-                           send_guard_signal, start_thread, stop_on_signals)
+from llm_eval.stop import (GUARD_SIGNAL, STOP_SIGNALS, GuardStop, defer_stop_signals, end_guard_stop,
+                           flush_std_streams, notice, send_guard_signal, start_thread, stop_on_signals)
 
 
 def blocked_signals(thread: threading.Thread) -> set[int]:
@@ -180,13 +180,29 @@ def test_guard_signal_raises_guard_stop_in_a_blocking_call():
     assert signal.getsignal(GUARD_SIGNAL) == signal.SIG_DFL
 
 
-def test_stop_signal_after_a_guard_stop_raises():
+def test_stop_signal_during_the_cleanup_of_a_guard_stop_raises_at_its_end():
+    done = []
     with stop_on_signals():
         with pytest.raises(GuardStop):
             send_guard_signal()
             sum(range(100))
-        with pytest.raises(KeyboardInterrupt, match="SIGINT"):  # the guard stop does not drop the signals
-            os.kill(os.getpid(), signal.SIGINT)
+        os.kill(os.getpid(), signal.SIGINT)  # the cleanup of the guard stop is not interrupted
+        sum(range(100))
+        done.append("cleanup")
+        with pytest.raises(KeyboardInterrupt, match="SIGINT"):  # the guard stop does not drop the signal
+            end_guard_stop()
+
+    assert done == ["cleanup"]
+
+
+def test_end_of_a_guard_stop_without_a_stop_signal():
+    with stop_on_signals():
+        with pytest.raises(GuardStop):
+            send_guard_signal()
+            sum(range(100))
+        end_guard_stop()
+        with pytest.raises(KeyboardInterrupt, match="SIGTERM"):  # the next stop signal raises at once
+            os.kill(os.getpid(), signal.SIGTERM)
             sum(range(100))
 
 
@@ -239,6 +255,10 @@ def test_guard_stop_comes_again_when_a_deallocator_swallowed_it(monkeypatch):
         with pytest.raises(GuardStop):
             GuardSignalInDeallocator()
             time.sleep(5)
+        end_guard_stop()
+        with pytest.raises(KeyboardInterrupt):  # the lost GuardStop did not leave the stop signals deferred
+            os.kill(os.getpid(), signal.SIGINT)
+            sum(range(100))
 
     assert time.monotonic() - start < 2
 

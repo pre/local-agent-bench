@@ -6,7 +6,9 @@ the three signals stops the run: the harness then stops and removes its
 containers, and more signals do not interrupt this cleanup.
 
 The memory guard (guard.py) sends GUARD_SIGNAL to the main thread. It raises
-GuardStop: the run of one configuration stops, with the same cleanup.
+GuardStop: the run of one configuration stops, with the same cleanup. A stop
+signal does not interrupt this cleanup either. It raises KeyboardInterrupt at
+end_guard_stop(), after the cleanup.
 """
 
 import os
@@ -42,6 +44,7 @@ def _stop(signum, frame) -> None:
             _State.deferred = signum
         return
     if signum == GUARD_SIGNAL:
+        _State.deferring += 1  # the cleanup of the guard stop is a defer block until end_guard_stop()
         raise GuardStop
     _State.stopping = True
     raise KeyboardInterrupt(signal.Signals(signum).name)
@@ -52,11 +55,18 @@ def send_guard_signal() -> None:
     signal.pthread_kill(threading.main_thread().ident, GUARD_SIGNAL)
 
 
+def end_guard_stop() -> None:
+    """Call it when the cleanup of a GuardStop is complete. A stop signal that came
+    during the cleanup then raises KeyboardInterrupt."""
+    _end_deferring()
+
+
 def _unraisable(args) -> None:
     """Python ignores an exception that occurs in a deallocator (__del__), also the
     KeyboardInterrupt of _stop, and gives it to this hook. Send the signal again
     after RESEND_S, when the main thread is out of the deallocator."""
     if isinstance(args.exc_value, GuardStop):
+        _State.deferring -= 1  # the cleanup of the lost GuardStop does not occur
         start_thread(threading.Timer(RESEND_S, send_guard_signal))
     elif _State.stopping and isinstance(args.exc_value, KeyboardInterrupt):
         _State.stopping = False
@@ -110,10 +120,14 @@ def defer_stop_signals() -> Iterator[None]:
     try:
         yield
     finally:
-        _State.deferring -= 1
-        if not _State.deferring and _State.deferred:
-            signum, _State.deferred = _State.deferred, None
-            _stop(signum, None)
+        _end_deferring()
+
+
+def _end_deferring() -> None:
+    _State.deferring -= 1
+    if not _State.deferring and _State.deferred:
+        signum, _State.deferred = _State.deferred, None
+        _stop(signum, None)
 
 
 def start_thread(thread: threading.Thread) -> None:
