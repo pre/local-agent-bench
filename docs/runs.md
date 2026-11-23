@@ -12,7 +12,7 @@
 
 `--task` (can repeat) and `--reps` replace the values of the tier.
 
-- `--config` can repeat. The configurations run one after the other, each with its own run directory and its own server: the harness stops server A before it starts server B. A server error stops only the run of that configuration, and the exit code is then 1. `--out` is permitted with one `--config` only.
+- `--config` can repeat. The configurations run one after the other, each with its own run directory and its own server: the harness stops server A before it starts server B. A server error stops only the run of that configuration, and the exit code is then 1. The memory guard also stops only the run of its configuration, and the exit code is then 3 (see [Exit codes](#exit-codes)). `--out` is permitted with one `--config` only.
 - The selfcheck runs once for each agent image before the first configuration.
 - An exception in a trial gives a `result.json` with `failure_reason = "harness_error"`, the error in `failure_detail` and the traceback in `harness_error.txt`. The run continues with the next trial.
 - After each trial a progress line goes to stdout and to `run.log` in the run directory, for example `2026-11-19T18:20:01+00:00 [3/15] qwen38-base go-bugfix r3 FAIL verify_failed wall 878.2 s passed 1/3`.
@@ -46,7 +46,8 @@ The default run directory is `~/daybook-evidence/local-llm/eval/<run-id>/`, wher
 
 ```
 <run-id>/
-  run.json                 configuration values, server values, image, Claude Code version, tasks
+  run.json                 configuration values, server values, image, Claude Code version, tasks,
+                           memory_guard after a trip of the memory guard (see server-control.md)
   run.log                  one progress line for each trial
   server.log               the full log of a managed server
   probes/                  only with run --probe (see probes.md)
@@ -81,3 +82,15 @@ A trial passes only if Claude Code stops normally and the check passes. The fail
 | `context_overflow` | An API error that says that the prompt is too long for the context |
 | `api_error` | Another API error |
 | `verify_failed` | The check failed |
+
+## Exit codes
+
+The exit code of `llm-eval run`:
+
+| Code | Meaning |
+|---|---|
+| 0 | All configurations ran to the end |
+| 1 | A task did not pass the selfcheck, or a configuration stopped with a server error, a probe error or the probe gate |
+| 2 | An error in a configuration file, a task or the options |
+| 3 | The memory guard stopped the run of a configuration (see [Memory guard](server-control.md#memory-guard)). Also when another configuration stopped with code 1 |
+| 130 | A stop signal stopped the run (see "Stop a run" in [README.md](../README.md#stop-a-run)). Also when the memory guard tripped before or during the stop |

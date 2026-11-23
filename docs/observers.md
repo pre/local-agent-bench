@@ -2,7 +2,7 @@
 
 The harness starts the observers just before the agent container and stops them just after it. Each one gives a key of `result.json`.
 
-`memory` (always on): a thread of the harness reads the host memory each second and writes `memory.csv` in the trial directory with the columns `time` (UTC), `gtt_used_mib`, `mem_available_mib`, `swap_free_mib`, `psi_some_avg10`, `psi_full_avg10` (`/proc/pressure/memory`).
+`memory` (always on): a thread of the harness reads the host memory each second and writes `memory.csv` in the trial directory with the columns `time` (UTC), `gtt_used_mib`, `mem_available_mib`, `swap_free_mib`, `psi_some_avg10`, `psi_full_avg10` (`/proc/pressure/memory`). It only measures. The memory guard, which stops a managed server when the memory is low, is a different thread (see [Memory guard](server-control.md#memory-guard)).
 
 ```json
 {"gtt_used_start_mib": 91828, "gtt_used_peak_mib": 91934, "mem_available_min_mib": 16008,

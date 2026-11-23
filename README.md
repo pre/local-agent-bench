@@ -62,6 +62,7 @@ The same occurs during the server start, during the probes and during a trial. S
 - The messages of the cleanup go to stderr and to `run.log` in the run directory. In `... 2>&1 | tee -a <log>`, Ctrl-C also stops `tee`. Then the messages are only in `run.log`, not in `<log>`. Use `tee -i -a <log>`: `tee` then ignores SIGINT, `<log>` also gets the messages, and the tmux pane stays open until the harness stops.
 - `kill -KILL` stops the harness before its cleanup. Use it only when the harness does not stop in 2 minutes. Then do the manual cleanup below.
 - When SIGHUP or SIGINT is ignored at the start (`nohup`, a background job of a shell script), the harness keeps it ignored.
+- The memory guard of a managed server uses the same cleanup when the memory is low, but it stops only the run of one configuration, and the exit code is 3 (see [Memory guard](docs/server-control.md#memory-guard)). The checks below also apply after a trip.
 
 After a stop, do these checks:
 
@@ -98,9 +99,9 @@ Remove only containers with the name `llm-eval-server` (label `llm-eval.role=ser
 | [docs/models.md](docs/models.md) | The local models and their download |
 | [docs/cloud-models.md](docs/cloud-models.md) | Claude models through the company LLM gateway: secrets, network of a remote endpoint, cost |
 | [docs/network.md](docs/network.md) | Network isolation of the agent container |
-| [docs/server-control.md](docs/server-control.md) | Start and stop of a managed server, GTT limits, server values in `run.json` |
+| [docs/server-control.md](docs/server-control.md) | Start and stop of a managed server, GTT limits, the memory guard, server values in `run.json` |
 | [docs/observers.md](docs/observers.md) | Memory and server observers during a trial |
-| [docs/runs.md](docs/runs.md) | Tiers, repetitions, resume, trial procedure, result files, failure reasons |
+| [docs/runs.md](docs/runs.md) | Tiers, repetitions, resume, trial procedure, result files, failure reasons, exit codes |
 | [docs/tasks.md](docs/tasks.md) | Task contract and how to add a task |
 | [docs/report.md](docs/report.md) | The `report` and `compare` commands |
 | [docs/probes.md](docs/probes.md) | Speed and protocol probes of a server |

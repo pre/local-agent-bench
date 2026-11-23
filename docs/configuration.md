@@ -40,6 +40,7 @@ api_key_file = "~/.config/llama-server/api-key"
 port = 8090                                  # host port, on 127.0.0.1 only
 gtt_max_used_mib = 12288                     # optional, see server-control.md
 gtt_min_margin_mib = 4096                    # optional, see server-control.md
+mem_available_min_mib = 2048                 # optional, 0 switches it off, see server-control.md
 start_timeout_s = 900                        # optional, the time limit for /health
 health_path = "/health"                      # optional
 agent_network = "proxy"                      # optional, see network.md
