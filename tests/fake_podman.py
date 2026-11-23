@@ -32,7 +32,8 @@ AGENT_S = float(os.environ.get("FAKE_PODMAN_AGENT_S", "60"))
 
 
 def record(event: str, args: list[str], **extra) -> None:
-    line = json.dumps({"event": event, "argv": args, "pid": os.getpid(), "ppid": os.getppid(), "pgid": os.getpgid(0), **extra})
+    line = json.dumps({"event": event, "argv": args, "pid": os.getpid(), "ppid": os.getppid(), "pgid": os.getpgid(0),
+                       "time": time.time(), **extra})
     with (STATE / "calls.jsonl").open("a") as f:
         f.write(line + "\n")
 
