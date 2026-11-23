@@ -241,3 +241,21 @@ def test_guard_stop_comes_again_when_a_deallocator_swallowed_it(monkeypatch):
             time.sleep(5)
 
     assert time.monotonic() - start < 2
+
+
+def test_a_stop_in_the_mask_change_does_not_leave_the_stop_signals_blocked(monkeypatch):
+    real_sigmask = signal.pthread_sigmask
+
+    def sigmask_with_a_pending_handler(how, mask):
+        previous = real_sigmask(how, mask)
+        if how == signal.SIG_BLOCK and set(mask) == set(STOP_SIGNALS):
+            raise GuardStop  # Python runs a pending handler after it changes the mask
+        return previous
+
+    monkeypatch.setattr(signal, "pthread_sigmask", sigmask_with_a_pending_handler)
+
+    with pytest.raises(GuardStop):
+        start_thread(threading.Thread(target=lambda: None))
+
+    monkeypatch.undo()
+    assert not set(STOP_SIGNALS) & signal.pthread_sigmask(signal.SIG_BLOCK, [])

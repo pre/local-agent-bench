@@ -67,9 +67,12 @@ def _unraisable(args) -> None:
 
 @contextmanager
 def _signals_blocked() -> Iterator[None]:
-    """A stop signal stays pending until the end of the block."""
-    previous = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
+    """A stop signal stays pending until the end of the block. Python runs a pending
+    handler after it changes the mask: when the handler raises, the finally
+    clause must restore the mask, thus the change is in the try clause."""
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, [])
     try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
         yield
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
