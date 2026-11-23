@@ -190,6 +190,9 @@ def _managed(raw: dict[str, Any]) -> ManagedConfig:
     _check_keys(draft, "server.draft.", {"model_file", "args"})
     _check_args(raw.get("args", {}), "server.args")
     _check_args(draft.get("args", {}), "server.draft.args")
+    for key in ("gtt_max_used_mib", "gtt_min_margin_mib", "mem_available_min_mib"):
+        if key in raw and type(raw[key]) is not int:  # bool is a subclass of int: refuse true and false too
+            raise ConfigError(f"server.{key} must be an integer (MiB), not {raw[key]!r}")
     values = {key: raw[key] for key in MANAGED_KEYS & raw.keys() & ManagedConfig.__dataclass_fields__.keys()}
     values["models_dir"] = Path(raw["models_dir"]).expanduser()
     values["draft"] = DraftConfig(draft["model_file"], draft.get("args", {})) if draft.get("model_file") else None

@@ -219,6 +219,15 @@ def test_mem_available_min_comes_from_the_configuration(tmp_path, value):
     assert load_config(write(tmp_path, text)).server.managed.mem_available_min_mib == value
 
 
+@pytest.mark.parametrize("key", ["gtt_max_used_mib", "gtt_min_margin_mib", "mem_available_min_mib"])
+@pytest.mark.parametrize("value", ['"2048"', "true", "2048.0"])
+def test_memory_limits_must_be_integers(tmp_path, key, value):
+    text = MANAGED.replace("port = 8091", f"port = 8091\n{key} = {value}")
+
+    with pytest.raises(ConfigError, match=f"server.{key} must be an integer"):
+        load_config(write(tmp_path, text))
+
+
 def test_managed_draft_and_template(tmp_path):
     text = MANAGED.replace("[server.args]", """
 chat_template = "templates/t.jinja"
