@@ -348,6 +348,9 @@ class ManagedServer(ExternalServer):
                 raise ServerError(f"podman run of {MANAGED_CONTAINER} failed: {out.strip()}")
             total = self.gtt_total()
             load_peak = self._wait_until_healthy(total)
+            self.guard = MemoryGuard(self.podman, self.out_dir, m, lambda: self.phase, self.gtt_used,
+                                     self.gtt_total, self.mem_available, self.guard_interval_s)
+            self.guard.start()
             load_seconds = round(time.monotonic() - began, 1)
             after_load = self.gtt_used()
             self.info = {
@@ -369,9 +372,6 @@ class ManagedServer(ExternalServer):
                 "gtt_total_mib": total,
             }
             super().__enter__()
-            self.guard = MemoryGuard(self.podman, self.out_dir, m, lambda: self.phase, self.gtt_used,
-                                     self.gtt_total, self.mem_available, self.guard_interval_s)
-            self.guard.start()
         except BaseException:
             self._stop_server()
             raise

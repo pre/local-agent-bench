@@ -56,7 +56,8 @@ class MemoryGuard:
 
     def stop(self) -> None:
         self.stopping.set()
-        self.thread.join()
+        if self.thread.ident is not None:  # a stop signal can come between the creation and the start
+            self.thread.join()
 
     def _loop(self) -> None:
         while True:

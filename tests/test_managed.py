@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from fakes import FakePodman
+from llm_eval import guard as guard_module
 from llm_eval import server as server_module
 from llm_eval.config import load_config
 from llm_eval.server import ManagedServer, ServerError, llama_server_args, open_server
@@ -474,3 +475,37 @@ def test_stop_signal_after_a_guard_stop_before_the_cleanup_removes_the_server(re
 
     assert NAME not in podman.containers
     assert (repo / "run" / "server.log").exists()
+
+
+def test_stop_signal_before_the_guard_thread_starts_removes_the_server(repo, http_server, monkeypatch):
+    def start(self):
+        raise KeyboardInterrupt("SIGINT")  # the handler ran before start_thread started the thread
+
+    monkeypatch.setattr(guard_module.MemoryGuard, "start", start)
+    podman = FakePodman()
+
+    with pytest.raises(KeyboardInterrupt):
+        with managed(repo, podman, url=http_server):
+            pass
+
+    assert NAME not in podman.containers
+    assert (repo / "run" / "server.log").exists()
+
+
+def test_memory_guard_starts_when_the_server_is_healthy(repo, http_server):
+    podman = FakePodman()
+    server = managed(repo, podman, url=http_server)
+    real_call = podman.call
+    guard_ran = []
+
+    def call(args):
+        if "--version" in args:  # after the healthy /health, during the collection of the server values
+            guard_ran.append(server.guard is not None and server.guard.thread.is_alive())
+        return real_call(args)
+
+    podman.call = call
+
+    with server:
+        pass
+
+    assert guard_ran == [True]

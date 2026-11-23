@@ -155,3 +155,11 @@ def test_unreadable_gtt_gives_one_warning_and_no_trip(tmp_path):
 
 def test_read_mem_available(host):
     assert read_mem_available_mib(host.root / "meminfo") == 2000
+
+
+def test_stop_of_a_guard_that_did_not_start(tmp_path):
+    guard = make_guard(tmp_path, server_podman(), Readings())
+
+    guard.stop()  # a stop signal came between the creation of the guard and its start
+
+    assert guard.trip is None
