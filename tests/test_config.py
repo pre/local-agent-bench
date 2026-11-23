@@ -209,6 +209,14 @@ def test_loads_managed_server(tmp_path):
     assert managed.gtt_max_used_mib == 12288
     assert managed.start_timeout_s == 900
     assert managed.gtt_min_margin_mib == 4096
+    assert managed.mem_available_min_mib == 2048
+
+
+@pytest.mark.parametrize("value", [0, 4096])
+def test_mem_available_min_comes_from_the_configuration(tmp_path, value):
+    text = MANAGED.replace("port = 8091", f"port = 8091\nmem_available_min_mib = {value}")
+
+    assert load_config(write(tmp_path, text)).server.managed.mem_available_min_mib == value
 
 
 def test_managed_draft_and_template(tmp_path):
