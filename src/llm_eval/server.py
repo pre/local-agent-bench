@@ -23,9 +23,10 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .config import MANAGED_CONTAINER, PROXY, Args, ServerConfig
+from .guard import GUARD_INTERVAL_S, MemoryGuard
 from .podman import Mount
-from .sampler import read_gtt_total_mib, read_gtt_used_mib
-from .stop import defer_stop_signals, notice, start_thread
+from .sampler import read_gtt_total_mib, read_gtt_used_mib, read_mem_available_mib
+from .stop import GuardStop, defer_stop_signals, notice, start_thread
 
 RELAY_DIR = "/run/llm-eval"
 PROXY_BASE_URL = "http://127.0.0.1:8080"
@@ -147,6 +148,10 @@ def _pump(source: socket.socket, dest: socket.socket) -> None:
 
 class ExternalServer:
     """A server that runs already. The harness does not start or stop it."""
+
+    # The part of the run, for the record of the memory guard. Only a managed server has a guard.
+    phase = "start"
+    guard: MemoryGuard | None = None
 
     def __init__(self, cfg: ServerConfig, scratch: Path, gtt_total: Callable[[], int] = read_gtt_total_mib):
         self.cfg = cfg
@@ -307,11 +312,14 @@ class ManagedServer(ExternalServer):
 
     The harness removes only a container that has its label. The container also
     stops when the body of the with statement raises, a stop signal included (see stop.py).
+    From the healthy start to the stop, the memory guard runs (see guard.py).
     """
 
     def __init__(self, cfg: ServerConfig, scratch: Path, podman, root: Path, out_dir: Path,
                  replace: bool = False, gtt_used: Callable[[], int] = read_gtt_used_mib,
-                 gtt_total: Callable[[], int] = read_gtt_total_mib, sleep: Callable[[float], None] = time.sleep):
+                 gtt_total: Callable[[], int] = read_gtt_total_mib, sleep: Callable[[float], None] = time.sleep,
+                 mem_available: Callable[[], int] = read_mem_available_mib,
+                 guard_interval_s: float = GUARD_INTERVAL_S):
         super().__init__(cfg, scratch, gtt_total)
         self.podman = podman
         self.root = root
@@ -319,6 +327,8 @@ class ManagedServer(ExternalServer):
         self.replace = replace
         self.gtt_used = gtt_used
         self.sleep = sleep
+        self.mem_available = mem_available
+        self.guard_interval_s = guard_interval_s
         self.started = False
         self.info: dict | None = None
 
@@ -359,6 +369,9 @@ class ManagedServer(ExternalServer):
                 "gtt_total_mib": total,
             }
             super().__enter__()
+            self.guard = MemoryGuard(self.podman, self.out_dir, m, lambda: self.phase, self.gtt_used,
+                                     self.gtt_total, self.mem_available, self.guard_interval_s)
+            self.guard.start()
         except BaseException:
             self._stop_server()
             raise
@@ -461,7 +474,7 @@ class ManagedServer(ExternalServer):
     def _stop_server(self) -> None:
         try:
             self._remove()
-        except KeyboardInterrupt:  # the signal came before _remove deferred the signals
+        except (KeyboardInterrupt, GuardStop):  # the signal came before _remove deferred the signals
             self._remove()
             raise
 
@@ -472,6 +485,8 @@ class ManagedServer(ExternalServer):
             if not self.started:
                 return
             self.started = False
+            if self.guard:
+                self.guard.stop()
             notice(self.out_dir, f"llm-eval: stopping {MANAGED_CONTAINER}")
             self.podman.call(["stop", "-t", str(STOP_TIMEOUT_S), MANAGED_CONTAINER])
             _, log = self.podman.call(["logs", MANAGED_CONTAINER])
@@ -489,7 +504,8 @@ class ManagedServer(ExternalServer):
 def open_server(cfg: ServerConfig, scratch: Path, podman=None, root: Path | None = None,
                 out_dir: Path | None = None, replace: bool = False, **host) -> ExternalServer:
     """Return the server of the configuration. Use it as a context manager. `host`
-    replaces the functions that read GTT (and sleep for a managed server) in tests."""
+    replaces the functions that read GTT (and sleep, MemAvailable and the guard
+    interval for a managed server) in tests."""
     if cfg.managed:
         return ManagedServer(cfg, scratch, podman, root, out_dir, replace, **host)
     if cfg.mode == "remote":

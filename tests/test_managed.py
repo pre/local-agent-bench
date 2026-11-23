@@ -3,6 +3,7 @@ import json
 import os
 import signal
 import socket
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from fakes import FakePodman
 from llm_eval import server as server_module
 from llm_eval.config import load_config
 from llm_eval.server import ManagedServer, ServerError, llama_server_args, open_server
-from llm_eval.stop import stop_on_signals
+from llm_eval.stop import GuardStop, stop_on_signals
 from test_server import http_server  # noqa: F401  (fixture)
 
 NAME = "llm-eval-server"
@@ -77,11 +78,22 @@ def write_config(repo: Path, url: str | None = None, timeout: int = 5, **replace
 
 
 def managed(repo, podman, gtt_mib=500, replace=False, gtt_used=None, gtt_total_mib=100000, sleep=None,
-            **kw) -> ManagedServer:
+            mem_available_mib=50000, **kw) -> ManagedServer:
     cfg = load_config(write_config(repo, **kw))
     return open_server(cfg.server, repo / "scratch", podman=podman, root=repo, out_dir=repo / "run",
                        replace=replace, gtt_used=gtt_used or (lambda: gtt_mib), gtt_total=lambda: gtt_total_mib,
-                       sleep=sleep or (lambda s: None))
+                       sleep=sleep or (lambda s: None), mem_available=lambda: mem_available_mib,
+                       guard_interval_s=0.01)
+
+
+def sequence(*values: int):
+    """A reader that gives the values one after the other, then the last value again for the memory guard."""
+    rest = list(values)
+
+    def read() -> int:
+        return rest.pop(0) if len(rest) > 1 else rest[0]
+
+    return read
 
 
 def test_llama_server_args(repo):
@@ -100,9 +112,9 @@ def test_life_cycle(repo, http_server):
     podman = FakePodman()
     podman.server_log = "server log k1\n"
 
-    readings = iter([500, 900, 800])  # before the start, at the health check, after the load
+    readings = sequence(500, 900, 800)  # before the start, at the health check, after the load
 
-    with managed(repo, podman, url=http_server, gtt_used=lambda: next(readings)) as server:
+    with managed(repo, podman, url=http_server, gtt_used=readings) as server:
         assert podman.containers[NAME]["labels"] == {"llm-eval.role": "server"}
         assert server.agent_access().network == "none"
         info = server.describe()
@@ -176,6 +188,7 @@ def test_guard_kills_the_server_between_two_health_polls(repo, capsys):
     with pytest.raises(ServerError, match=r"GTT used is 96000 MiB of 100000 MiB.*server.gtt_min_margin_mib = 4096"):
         server.__enter__()
 
+    assert server.guard is None  # the memory guard starts when the server is healthy
     assert health_polls == [0]
     assert sleeps == [0.2, 0.2, 0.2]
     commands = [c[0] for c in podman.calls]
@@ -187,9 +200,9 @@ def test_guard_kills_the_server_between_two_health_polls(repo, capsys):
 
 def test_health_poll_is_each_second_and_gtt_each_fifth_of_a_second(repo, http_server):
     podman = FakePodman()
-    readings = iter([500, 1000, 3000, 2000, 1500, 1200, 900, 800])
+    readings = sequence(500, 1000, 3000, 2000, 1500, 1200, 900, 800)
     sleeps, health_polls = [], []
-    server = managed(repo, podman, url=http_server, gtt_used=lambda: next(readings), sleep=sleeps.append)
+    server = managed(repo, podman, url=http_server, gtt_used=readings, sleep=sleeps.append)
     real_check = server.check_health
 
     def check_health():
@@ -211,10 +224,10 @@ def test_health_poll_is_each_second_and_gtt_each_fifth_of_a_second(repo, http_se
 
 
 def test_gtt_margin_comes_from_the_configuration(repo, http_server):
-    readings = iter([500, 99000, 99000])
+    readings = sequence(500, 99000, 99000)
     margin = "gtt_min_margin_mib = 512\nstart_timeout_s"
 
-    with managed(repo, FakePodman(), url=http_server, gtt_used=lambda: next(readings),
+    with managed(repo, FakePodman(), url=http_server, gtt_used=readings,
                  **{"start_timeout_s": margin}) as server:
         assert server.describe()["gtt_used_load_peak_mib"] == 99000
 
@@ -363,7 +376,8 @@ def test_signal_during_the_normal_cleanup_stops_the_run_after_it(repo, http_serv
     assert (repo / "run" / "server.log").exists()
 
 
-def test_signal_just_before_the_cleanup_defers_the_signals(repo, http_server, monkeypatch):
+@pytest.mark.parametrize("stop", [KeyboardInterrupt, GuardStop])
+def test_signal_just_before_the_cleanup_defers_the_signals(repo, http_server, monkeypatch, stop):
     real_defer = server_module.defer_stop_signals
     entered = []
 
@@ -371,15 +385,65 @@ def test_signal_just_before_the_cleanup_defers_the_signals(repo, http_server, mo
     def defer_with_an_early_signal():
         entered.append(1)
         if len(entered) == 1:
-            raise KeyboardInterrupt("SIGTERM")  # the signal came before the block
+            raise stop()  # the signal came before the block
         with real_defer():
             yield
 
     monkeypatch.setattr(server_module, "defer_stop_signals", defer_with_an_early_signal)
     podman = FakePodman()
 
-    with pytest.raises(KeyboardInterrupt):
-        with managed(repo, podman, url=http_server):
+    with pytest.raises(stop):
+        with managed(repo, podman, url=http_server) as server:
             pass
 
     assert NAME not in podman.containers
+    assert not server.guard.thread.is_alive()
+
+
+def test_memory_guard_runs_from_the_health_to_the_stop(repo, http_server):
+    podman = FakePodman()
+
+    with managed(repo, podman, url=http_server) as server:
+        assert server.guard.thread.is_alive()
+
+    assert not server.guard.thread.is_alive()
+    assert server.guard.trip is None
+    assert not any(c[0] == "kill" for c in podman.calls)
+
+
+def test_memory_guard_kills_and_removes_the_server(repo, http_server):
+    podman = FakePodman()
+    podman.server_log = "server log k1\n"
+    gtt = {"used": 500}
+
+    with stop_on_signals():
+        with pytest.raises(GuardStop):
+            with managed(repo, podman, url=http_server, gtt_used=lambda: gtt["used"]) as server:
+                server.phase = "probes"
+                gtt["used"] = 96000  # 100000 MiB total, margin 4096 MiB
+                time.sleep(5)
+
+    commands = [c[0] for c in podman.calls]
+    assert commands.index("kill") < commands.index("stop") < commands.index("rm")
+    assert NAME not in podman.containers
+    assert (repo / "run" / "server.log").read_text() == "server log <redacted>\n"
+    assert server.guard.trip["reason"] == "gtt_margin"
+    assert server.guard.trip["gtt_used_mib"] == 96000
+    assert server.guard.trip["phase"] == "probes"
+    assert "MEMORY GUARD: GTT used is 96000 MiB of 100000 MiB" in (repo / "run" / "run.log").read_text()
+
+
+def test_memory_guard_trip_at_the_healthy_start_removes_the_server(repo, http_server):
+    podman = FakePodman()
+    limit = "mem_available_min_mib = 60000\nstart_timeout_s"
+    server = managed(repo, podman, url=http_server, **{"start_timeout_s": limit})
+
+    with stop_on_signals():
+        with pytest.raises(GuardStop):
+            with server:
+                time.sleep(5)
+
+    assert NAME not in podman.containers
+    assert server.guard.trip["phase"] == "start"
+    assert server.guard.trip["mem_available_mib"] == 50000
+    assert server.guard.trip["limit_mib"] == 60000
