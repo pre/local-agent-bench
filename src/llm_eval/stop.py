@@ -4,6 +4,9 @@ Ctrl-C in tmux sends SIGINT to all processes of the pane, also to `tee`. Then
 the pane closes and tmux sends SIGHUP. A stop with `kill` sends SIGTERM. Each of
 the three signals stops the run: the harness then stops and removes its
 containers, and more signals do not interrupt this cleanup.
+
+The memory guard (guard.py) sends GUARD_SIGNAL to the main thread. It raises
+GuardStop: the run of one configuration stops, with the same cleanup.
 """
 
 import os
@@ -16,30 +19,46 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+GUARD_SIGNAL = signal.SIGUSR1
 RESEND_S = 0.1
+
+
+class GuardStop(BaseException):
+    """The memory guard killed the server. As for KeyboardInterrupt, `except
+    Exception` does not catch it: the trial in progress gets no result."""
 
 
 class _State:
     stopping = False  # a KeyboardInterrupt of a stop signal is on its way: more signals do nothing
     deferring = 0  # the depth of defer_stop_signals blocks
-    deferred: int | None = None  # the first stop signal of a defer_stop_signals block
+    deferred: int | None = None  # the first stop signal of a defer_stop_signals block, else the guard signal
 
 
 def _stop(signum, frame) -> None:
     if _State.stopping:
         return
     if _State.deferring:
-        _State.deferred = _State.deferred or signum
+        if _State.deferred in (None, GUARD_SIGNAL):
+            _State.deferred = signum
         return
+    if signum == GUARD_SIGNAL:
+        raise GuardStop
     _State.stopping = True
     raise KeyboardInterrupt(signal.Signals(signum).name)
+
+
+def send_guard_signal() -> None:
+    """Make the main thread raise GuardStop, also in a blocking call."""
+    signal.pthread_kill(threading.main_thread().ident, GUARD_SIGNAL)
 
 
 def _unraisable(args) -> None:
     """Python ignores an exception that occurs in a deallocator (__del__), also the
     KeyboardInterrupt of _stop, and gives it to this hook. Send the signal again
     after RESEND_S, when the main thread is out of the deallocator."""
-    if _State.stopping and isinstance(args.exc_value, KeyboardInterrupt):
+    if isinstance(args.exc_value, GuardStop):
+        start_thread(threading.Timer(RESEND_S, send_guard_signal))
+    elif _State.stopping and isinstance(args.exc_value, KeyboardInterrupt):
         _State.stopping = False
         again = signal.Signals[args.exc_value.args[0]]
         start_thread(threading.Timer(RESEND_S, os.kill, (os.getpid(), again)))
@@ -60,13 +79,15 @@ def _signals_blocked() -> Iterator[None]:
 def stop_on_signals() -> Iterator[None]:
     """A stop signal raises KeyboardInterrupt. More stop signals do not raise, so
     that they do not interrupt the cleanup. A signal during the change of the
-    handlers stays pending until all handlers are changed."""
-    previous = {s: signal.getsignal(s) for s in STOP_SIGNALS}
+    handlers stays pending until all handlers are changed. The guard signal
+    raises GuardStop."""
+    previous = {s: signal.getsignal(s) for s in (*STOP_SIGNALS, GUARD_SIGNAL)}
     try:
         with _signals_blocked():
-            for s, handler in previous.items():
-                if handler is not signal.SIG_IGN:  # nohup, or a background job of a shell script
+            for s in STOP_SIGNALS:
+                if previous[s] is not signal.SIG_IGN:  # nohup, or a background job of a shell script
                     signal.signal(s, _stop)
+            signal.signal(GUARD_SIGNAL, _stop)  # also when ignored: the memory guard of the harness sends it
             _State.previous_hook, sys.unraisablehook = sys.unraisablehook, _unraisable
         yield
     finally:
@@ -80,7 +101,8 @@ def stop_on_signals() -> Iterator[None]:
 @contextmanager
 def defer_stop_signals() -> Iterator[None]:
     """A stop signal does not interrupt the block. When a stop signal came during
-    the block and no stop was on its way, KeyboardInterrupt comes after the block."""
+    the block and no stop was on its way, KeyboardInterrupt comes after the block.
+    When only the guard signal came, GuardStop comes after the block."""
     _State.deferring += 1
     try:
         yield

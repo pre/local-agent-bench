@@ -11,7 +11,8 @@ import pytest
 
 from llm_eval.sampler import MemorySampler
 from llm_eval.server import UnixRelay
-from llm_eval.stop import STOP_SIGNALS, defer_stop_signals, flush_std_streams, notice, start_thread, stop_on_signals
+from llm_eval.stop import (GUARD_SIGNAL, STOP_SIGNALS, GuardStop, defer_stop_signals, flush_std_streams, notice,
+                           send_guard_signal, start_thread, stop_on_signals)
 
 
 def blocked_signals(thread: threading.Thread) -> set[int]:
@@ -166,3 +167,77 @@ def test_flush_std_streams_sends_the_rest_of_a_closed_pipe_to_dev_null(monkeypat
     flush_std_streams()
 
     stream.close()  # the rest goes to /dev/null, no BrokenPipeError
+
+
+def test_guard_signal_raises_guard_stop_in_a_blocking_call():
+    start = time.monotonic()
+    with stop_on_signals():
+        start_thread(threading.Timer(0.1, send_guard_signal))
+        with pytest.raises(GuardStop):
+            time.sleep(5)
+
+    assert time.monotonic() - start < 2
+    assert signal.getsignal(GUARD_SIGNAL) == signal.SIG_DFL
+
+
+def test_stop_signal_after_a_guard_stop_raises():
+    with stop_on_signals():
+        with pytest.raises(GuardStop):
+            send_guard_signal()
+            sum(range(100))
+        with pytest.raises(KeyboardInterrupt, match="SIGINT"):  # the guard stop does not drop the signals
+            os.kill(os.getpid(), signal.SIGINT)
+            sum(range(100))
+
+
+def test_guard_signal_in_a_deferred_block_raises_after_the_block():
+    done = []
+    with stop_on_signals():
+        with pytest.raises(GuardStop):
+            with defer_stop_signals():
+                send_guard_signal()
+                sum(range(100))
+                done.append("block")
+
+    assert done == ["block"]
+
+
+@pytest.mark.parametrize("order", ["guard first", "stop first"])
+def test_stop_signal_wins_over_a_guard_signal_in_a_deferred_block(order):
+    sends = [send_guard_signal, lambda: os.kill(os.getpid(), signal.SIGTERM)]
+    if order == "stop first":
+        sends.reverse()
+    with stop_on_signals():
+        with pytest.raises(KeyboardInterrupt, match="SIGTERM"):
+            with defer_stop_signals():
+                for send in sends:
+                    send()
+                    sum(range(100))
+
+
+def test_guard_signal_during_the_cleanup_of_a_stop_is_dropped():
+    with stop_on_signals():
+        with pytest.raises(KeyboardInterrupt, match="SIGHUP"):
+            os.kill(os.getpid(), signal.SIGHUP)
+        send_guard_signal()
+        sum(range(100))
+        with defer_stop_signals():
+            send_guard_signal()
+            sum(range(100))
+
+
+class GuardSignalInDeallocator:
+    def __del__(self):
+        send_guard_signal()
+        sum(range(100))  # the handler runs here, in the deallocator
+
+
+def test_guard_stop_comes_again_when_a_deallocator_swallowed_it(monkeypatch):
+    monkeypatch.setattr("sys.unraisablehook", lambda args: None)
+    start = time.monotonic()
+    with stop_on_signals():
+        with pytest.raises(GuardStop):
+            GuardSignalInDeallocator()
+            time.sleep(5)
+
+    assert time.monotonic() - start < 2
