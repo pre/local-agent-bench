@@ -30,6 +30,10 @@ def read_gtt_total_mib(pattern: str = GTT_TOTAL_PATTERN) -> int:
     return _sum_mib(pattern)
 
 
+def read_mem_available_mib(path: Path = Path("/proc/meminfo")) -> int:
+    return read_meminfo_mib(path, "MemAvailable")[0]
+
+
 def read_meminfo_mib(path: Path, *keys: str) -> list[int]:
     values = {}
     for line in path.read_text().splitlines():
