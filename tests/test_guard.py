@@ -66,9 +66,9 @@ def test_guard_kills_the_server_when_the_gtt_margin_is_lost(tmp_path, capsys):
         try:
             time.sleep(0.1)
             assert podman.calls == []
-            readings.values["gtt_used"] = 109000
-            lost = time.monotonic()
-            with pytest.raises(GuardStop):
+            with pytest.raises(GuardStop):  # also around the change: the guard can trip at once
+                readings.values["gtt_used"] = 109000
+                lost = time.monotonic()
                 time.sleep(5)  # the main thread waits, for example for the agent container
             stopped = time.monotonic()
         finally:
@@ -140,8 +140,8 @@ def test_unreadable_gtt_gives_one_warning_and_no_trip(tmp_path):
         try:
             time.sleep(0.1)
             assert podman.calls == []
-            readings.values["mem_available"] = 1000  # the other condition still works
             with pytest.raises(GuardStop):
+                readings.values["mem_available"] = 1000  # the other condition still works
                 time.sleep(5)
         finally:
             guard.stop()

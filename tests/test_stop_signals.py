@@ -172,8 +172,8 @@ def test_flush_std_streams_sends_the_rest_of_a_closed_pipe_to_dev_null(monkeypat
 def test_guard_signal_raises_guard_stop_in_a_blocking_call():
     start = time.monotonic()
     with stop_on_signals():
-        start_thread(threading.Timer(0.1, send_guard_signal))
         with pytest.raises(GuardStop):
+            start_thread(threading.Timer(0.1, send_guard_signal))
             time.sleep(5)
 
     assert time.monotonic() - start < 2
