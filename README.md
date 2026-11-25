@@ -104,3 +104,4 @@ Remove only containers with the name `llm-eval-server` (label `llm-eval.role=ser
 | [docs/tasks.md](docs/tasks.md) | Task contract and how to add a task |
 | [docs/report.md](docs/report.md) | The `report` and `compare` commands |
 | [docs/probes.md](docs/probes.md) | Speed and protocol probes of a server |
+| [docs/adr/](docs/adr/README.md) | Architecture decision records: the decisions that are hard to reverse, each with its reason |
