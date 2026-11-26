@@ -7,8 +7,12 @@ On the host only podman and the orchestrator (`uv run llm-eval`) run. The agent 
 ## Use
 
 ```sh
-just image                                      # build localhost/llm-eval-agent:latest
-just selfcheck                                  # check all tasks without an LLM
+just install                                    # test environment, and the command llm-eval (use it in this directory)
+just build                                      # build localhost/llm-eval-agent:latest, after a change in image/ or of CLAUDE_VERSION
+just test                                       # unit tests with coverage, before each merge
+just selfcheck                                  # check all tasks without an LLM, after a change in tasks/
+just status                                     # before and after a run: exit code 1 when a harness process or container remains
+just clean                                      # remove the scratch directories that a killed run or a test left in TMPDIR
 just run configs/qwen38-external.toml --task go-bugfix
 just run configs/qwen38-external.toml --reps 3 --out ~/daybook-evidence/local-llm/eval/my-run
 just run configs/qwen38-base.toml --tier quick  # the harness starts and stops the server
@@ -18,7 +22,6 @@ just download-model gpt-oss-120b                # download model files (see docs
 just resume ~/daybook-evidence/local-llm/eval/<run-id>
 just report ~/daybook-evidence/local-llm/eval/<run-id>
 just compare <run-dir-a> <run-dir-b>
-just test                                       # unit tests with coverage
 ```
 
 The justfile sets `TMPDIR` (default `~/tmp`) and the CA variables (`SSL_CERT_FILE` and others) to `/etc/ssl/certs/ca-certificates.crt`.
@@ -69,10 +72,7 @@ After a stop, do these checks:
 ```sh
 tail -n 3 <run-dir>/run.log   # "llm-eval-server is removed, its log is server.log" and the --resume line
 ls -l <run-dir>/server.log
-podman ps -a --filter label=llm-eval.role=server --format '{{.Names}} {{.Status}}'   # no line
-podman ps -a --filter name=llm-eval-agent- --format '{{.Names}} {{.Status}}'         # no line
-pgrep -af 'llm-eval run'      # no line
-awk '{printf "%d MiB\n",$1/1048576}' /sys/class/drm/card*/device/mem_info_gtt_used   # GTT is free again
+just status                   # exit code 0: no harness process or container. GTT used is near gtt_used_before_start_mib of run.json
 ```
 
 Manual cleanup, only when one of the checks shows a remaining container:
@@ -82,14 +82,14 @@ podman stop -t 60 llm-eval-server
 podman logs llm-eval-server > <run-dir>/server.log 2>&1
 grep -cF -f ~/.config/llama-server/api-key <run-dir>/server.log   # 0: the log does not contain the key
 podman rm llm-eval-server
-podman rm -f -t 10 <llm-eval-agent-... name>
+podman rm -f -t 10 <llm-eval-agent-... name>   # also llm-eval-check-, -diff-, -solution- and -version-
 ```
 
-Remove only containers with the name `llm-eval-server` (label `llm-eval.role=server`) or `llm-eval-agent-*`. Never remove other containers.
+Remove only containers with the name `llm-eval-server` (label `llm-eval.role=server`) or `llm-eval-<kind>-*`, the names that `just status` shows. Never remove other containers.
 
 ## Image
 
-`just image` copies the Claude Code binary of the host (`~/.local/share/claude/versions/<version>`) into the image and checks it by SHA-256. `CLAUDE_VERSION` selects the version, default 2.1.328. The base images (`golang:1.27`, `rust`) are pinned by digest. The yq binary is pinned by version and SHA-256. The Debian packages (jq, ripgrep, shellcheck, socat) come from Debian 13 and can get security updates in a rebuild.
+`just build` copies the Claude Code binary of the host (`~/.local/share/claude/versions/<version>`) into the image and checks it by SHA-256. `CLAUDE_VERSION` selects the version, default 2.1.328. The base images (`golang:1.27`, `rust`) are pinned by digest. The yq binary is pinned by version and SHA-256. The Debian packages (jq, ripgrep, shellcheck, socat) come from Debian 13 and can get security updates in a rebuild.
 
 ## Documentation
 

@@ -14,12 +14,19 @@ CURL_CA_BUNDLE := ca_file
 NODE_EXTRA_CA_CERTS := ca_file
 TMPDIR := env("TMPDIR", home_directory() / "tmp")
 
+scratch_dirs := '"$TMPDIR"/llm-eval-run-* "$TMPDIR"/llm-eval-selfcheck-*'
+
 _default:
     @just --list
 
+# Install the Python environment of the tests, and the command llm-eval in ~/.local/bin (use it in this directory)
+install:
+    uv sync --locked
+    uv tool install --editable .
+
 # Build the agent image (Claude Code of the host, Go, Rust, Python and the tools)
 [script("bash")]
-image:
+build:
     set -euo pipefail
     sum=$(sha256sum "{{claude_bin}}" | cut -c1-64)
     podman build -t {{image}} \
@@ -45,6 +52,34 @@ resume run_dir *args:
 # Run the unit tests with coverage
 test *args:
     uv run pytest --cov=llm_eval --cov-report=term-missing {{args}}
+
+# Show the state of the host before and after a run. Exit code 1 when a harness process or container remains
+[script("bash")]
+status:
+    set -uo pipefail
+    show() { if [[ $2 == *$'\n'* ]]; then echo "$1:"; sed 's/^/  /' <<<"$2"; else echo "$1: ${2:-none}"; fi; }
+    procs=$(pgrep -ax llm-eval)
+    containers=$(podman ps -a --filter name=^llm-eval- --format '{{{{.Names}} {{{{.Status}}')
+    show "harness processes" "$procs"
+    show "harness containers" "$containers"
+    podman image exists {{image}} && show "agent image" "{{image}}" || show "agent image" "MISSING, run: just build"
+    gtt() { awk '{s += $1} END {print int(s / 1048576)}' /sys/class/drm/card*/device/mem_info_gtt_$1; }
+    show "GTT used" "$(gtt used) MiB of $(gtt total) MiB"
+    show "MemAvailable" "$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo) MiB"
+    shopt -s nullglob
+    dirs=({{scratch_dirs}})
+    show "scratch directories in $TMPDIR" "${#dirs[@]} (just clean removes them)"
+    [ -z "$procs$containers" ]
+
+# Remove the scratch directories of the harness in TMPDIR that a killed run or a test left
+[script("bash")]
+clean:
+    set -euo pipefail
+    if pgrep -ax llm-eval; then echo "A harness runs. Its scratch directory is in use."; exit 1; fi
+    shopt -s nullglob
+    dirs=({{scratch_dirs}})
+    rm -rf -- "${dirs[@]}"
+    echo "Removed ${#dirs[@]} scratch directories from $TMPDIR"
 
 # Write a Markdown report of run directories: just report <run-dir>... [--out file.md]
 report *args:

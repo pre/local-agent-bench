@@ -1,5 +1,5 @@
 # Agent image of llm-eval. The same image runs the agent (Claude Code) and the hidden check.
-# Build it with "just image". The base images are pinned by digest, so a rebuild gives the
+# Build it with "just build". The base images are pinned by digest, so a rebuild gives the
 # same Go, Rust and Claude Code. Debian packages come from trixie and can get security updates.
 
 ARG RUST_IMAGE=docker.io/library/rust@sha256:3ddd9771c00ed2c214d75ba497ad28691ebeaf2279476068dd191cf39b4be033
@@ -28,7 +28,7 @@ RUN curl -fsSL -o /usr/local/bin/yq \
  && echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c - \
  && chmod 755 /usr/local/bin/yq
 
-# "just image" mounts the Claude Code binary of the host at /run/claude-bin.
+# "just build" mounts the Claude Code binary of the host at /run/claude-bin.
 RUN test -n "${CLAUDE_VERSION}" \
  && echo "${CLAUDE_SHA256}  /run/claude-bin" | sha256sum -c - \
  && install -m 755 /run/claude-bin /usr/local/bin/claude
