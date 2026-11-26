@@ -62,7 +62,7 @@ The same occurs during the server start, during the probes and during a trial. S
 - The messages of the cleanup go to stderr and to `run.log` in the run directory. In `... 2>&1 | tee -a <log>`, Ctrl-C also stops `tee`. Then the messages are only in `run.log`, not in `<log>`. Use `tee -i -a <log>`: `tee` then ignores SIGINT, `<log>` also gets the messages, and the tmux pane stays open until the harness stops.
 - `kill -KILL` stops the harness before its cleanup. Use it only when the harness does not stop in 2 minutes. Then do the manual cleanup below.
 - When SIGHUP or SIGINT is ignored at the start (`nohup`, a background job of a shell script), the harness keeps it ignored.
-- The memory guard of a managed server uses the same cleanup when the memory is low, but it stops only the run of one configuration, and the exit code is 3 (see [Memory guard](docs/server-control.md#memory-guard)). The checks below also apply after a trip.
+- The memory guard of a managed server uses the same cleanup when the memory is low, see [Memory guard](docs/server-control.md#memory-guard).
 
 After a stop, do these checks:
 

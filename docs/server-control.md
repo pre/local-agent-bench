@@ -35,7 +35,7 @@ The guard reads the memory of the full host. Thus another program that fills the
 
 When the guard trips, it:
 
-1. Sends SIGUSR1 to the main thread of the harness. The main thread stops what it does, also a wait for the agent container or a probe request.
+1. Sends SIGUSR1 to the main thread of the harness. The main thread stops what it does, also a wait for the agent container or a probe request. The reason for a signal: [ADR 0003](adr/0003-memory-guard-stops-the-main-thread-with-a-signal.md).
 2. Kills the server container at once (`podman kill -s KILL llm-eval-server`). The kill does not wait for the main thread. Thus the server stops about 1 to 2 s after the memory became low: up to 1 s until the next reading, then the time of the kill.
 3. Writes the condition and its values to stderr and `run.log`, for example `llm-eval: MEMORY GUARD: GTT used is 109000 MiB of 112640 MiB, less free than server.gtt_min_margin_mib = 4096 MiB (trial go-bugfix-r2). The harness killed llm-eval-server.`
 
@@ -45,7 +45,7 @@ Then the harness does the cleanup of a stop signal: it removes the agent contain
 llm-eval: <configuration>: the memory guard stopped the run of this configuration. The trial in progress has no result. To continue: llm-eval run --resume <run-dir>
 ```
 
-Then the harness continues with the next configuration of `--config a --config b`, the same as after a server error. The exit code is 3 (see [Exit codes](runs.md#exit-codes)).
+Then the harness continues with the next configuration of `--config a --config b`, the same as after a server error. The exit code is 3 (see [Exit codes](runs.md#exit-codes)). After a trip, do the checks after a stop in "Stop a run" of [README.md](../README.md#stop-a-run).
 
 `memory_guard` in `run.json`:
 
