@@ -21,6 +21,8 @@
 
 ## Trial procedure
 
+A trial runs Claude Code itself, and a script decides the result. [ADR 0001](adr/0001-claude-code-trials-with-script-checks.md) gives the reason.
+
 1. Copy `workspace/` to `<trial>/work` and make a git repository with one commit "chore: Start the task" (identity `eval <eval@localhost>`, fixed date, so the SHA is the same in each trial).
 2. Copy `client-config/` to `<trial>/claude-config`.
 3. Run the agent container: `claude -p <prompt.md> --output-format stream-json --verbose --max-turns <max_turns> --dangerously-skip-permissions`. Stop it at `timeout_s`.

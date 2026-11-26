@@ -48,7 +48,7 @@ The agent can read its environment, for example with `env` in a Bash command. Th
 
 ## Network of a remote endpoint
 
-With `agent_network = "proxy"` the agent container has no network (`--network=none`), the same as for a local server:
+With `agent_network = "proxy"` the agent container has no network (`--network=none`), the same as for a local server (ADR 0002):
 
 1. The harness listens on a Unix socket (`<scratch>/relay/api.sock`). It accepts only `CONNECT <host>:<port>` to the host and port of `url`. It refuses each other request with HTTP 403, and gives HTTP 502 when the endpoint is not reachable.
 2. In the container, socat listens on `127.0.0.1:8080` and sends each connection to that socket.

@@ -8,3 +8,5 @@ The relay works for an external and for a managed server. Another value of `agen
 - `slirp4netns:allow_host_loopback=true` with `agent_url = "http://10.0.2.2:8080"`: the agent can reach the internet and all services on the loopback interface of the host.
 
 The check container always has no network.
+
+[ADR 0002](adr/0002-agent-without-network-behind-a-relay.md) gives the reason for the relay and the network modes that it replaced.
