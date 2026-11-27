@@ -33,6 +33,8 @@ The check of step 5 uses the same `gtt_min_margin_mib`. The default 2048 of `mem
 
 The guard reads the memory of the full host. Thus another program that fills the memory also trips it. The guard stops only the server of the harness, never another program.
 
+At its start the guard writes its limits and its interval to stderr and `run.log`, for example `llm-eval: the memory guard started. It reads the memory each 1 s and kills llm-eval-server when GTT total minus GTT used is less than server.gtt_min_margin_mib = 4096 MiB or MemAvailable is less than server.mem_available_min_mib = 2048 MiB.` It also keeps the lowest GTT margin (GTT total minus GTT used) and the lowest MemAvailable that it read, also when it does not trip. After the server stop, the harness writes them to `run.json` (see `memory_guard_lowest` below). Thus the files of a run without a trip show that the guard ran and how near the memory came to the limits.
+
 When the guard trips, it:
 
 1. Sends SIGUSR1 to the main thread of the harness. The main thread stops what it does, also a wait for the agent container or a probe request. The reason for a signal: [ADR 0003](adr/0003-memory-guard-stops-the-main-thread-with-a-signal.md).
@@ -60,6 +62,21 @@ Then the harness continues with the next configuration of `--config a --config b
 - `time`: UTC.
 
 `--resume` keeps `memory_guard`. A new trip replaces it. A trip before `run.json` exists (just after the first healthy `/health`) has only the message in `run.log`, and the last line tells how to start the run again. `llm-eval report` shows each trip in "Memory".
+
+`memory_guard_lowest` in `run.json`, also without a trip, has the lowest values that the memory guard read after the last server start of the run:
+
+```json
+{"gtt_margin": {"mib": 14891, "limit_mib": 4096, "phase": "trial rust-feature-r1", "time": "2026-11-27T03:01:02+00:00"},
+ "mem_available": {"mib": 15696, "limit_mib": 2048, "phase": "trial go-feature-r1", "time": "2026-11-27T01:00:12+00:00"}}
+```
+
+- `gtt_margin` and `mem_available`: the lowest GTT total minus GTT used and the lowest MemAvailable, from the first healthy `/health` of the last server start to the start of its server stop. The names are the same as the values of `reason`. The check of step 5 during the load is not included.
+- `mib`: the value. `limit_mib`: the value of its key. `phase` and `time`: the first reading of the lowest value, with the phase names of `memory_guard`.
+- `null`: no reading of that value was successful.
+- After a trip, the values include the reading of the trip.
+- The harness writes the key when the server stops, also after a server error, a probe gate stop, a trip or a stop signal. A stop before `run.json` exists gives no key. An external or remote server gives no key.
+- `--resume` replaces the key with the values of the new server start, also when an earlier start read lower values. The reason: the key must show that the guard of the last start ran. If the key kept the lower value of all starts, a resumed start with higher values would not change it, and the files could not show that its guard ran. The values of an earlier start stay in its trip record and in the memory values of its trials (`result.json`). Thus after `--resume`, `memory_guard` can come from an earlier start than `memory_guard_lowest`, and its values can be lower.
+- `llm-eval report` shows the values of each run in "Memory".
 
 Other rules:
 

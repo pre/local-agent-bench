@@ -11,6 +11,9 @@ server.mem_available_min_mib, the guard:
    the server as after a stop signal.
 2. kills the server container at once. This does not wait for the main thread.
 3. writes the values to stderr and run.log.
+
+At its start the guard writes its limits to stderr and run.log. It keeps the
+lowest GTT margin and the lowest MemAvailable that it read, also without a trip.
 """
 
 import threading
@@ -36,7 +39,9 @@ def trip_condition(trip: dict) -> str:
 
 
 class MemoryGuard:
-    """After a trip, `trip` has the values for run.json, else it is None."""
+    """After a trip, `trip` has the values for run.json, else it is None. `lowest` has
+    the lowest GTT margin and MemAvailable that the guard read, for run.json: each
+    value with its limit, phase and time, or None when the guard could not read it."""
 
     def __init__(self, podman, out_dir: Path, cfg: ManagedConfig, phase: Callable[[], str], gtt_used: Reader,
                  gtt_total: Reader, mem_available: Reader, interval_s: float = GUARD_INTERVAL_S):
@@ -47,6 +52,7 @@ class MemoryGuard:
         self.readers = (gtt_used, gtt_total, mem_available)
         self.interval_s = interval_s
         self.trip: dict | None = None
+        self.lowest: dict[str, dict | None] = {"gtt_margin": None, "mem_available": None}
         self.warned = False
         self.stopping = threading.Event()
         self.thread = threading.Thread(target=self._loop, daemon=True)
@@ -60,6 +66,10 @@ class MemoryGuard:
             self.thread.join()
 
     def _loop(self) -> None:
+        notice(self.out_dir, f"llm-eval: the memory guard started. It reads the memory each {self.interval_s:g} s and"
+                             f" kills {MANAGED_CONTAINER} when GTT total minus GTT used is less than"
+                             f" server.gtt_min_margin_mib = {self.cfg.gtt_min_margin_mib} MiB or MemAvailable is"
+                             f" less than server.mem_available_min_mib = {self.cfg.mem_available_min_mib} MiB.")
         while True:
             self.trip = self._check()
             if self.trip:
@@ -72,17 +82,25 @@ class MemoryGuard:
                 return
 
     def _check(self) -> dict | None:
-        """Return the values of a trip, or None when the memory is sufficient."""
+        """Keep the lowest values. Return the values of a trip, or None when the memory is sufficient."""
         used, total, available = (self._read(read) for read in self.readers)
-        if used is not None and total is not None and total - used < self.cfg.gtt_min_margin_mib:
+        margin = None if used is None or total is None else total - used
+        when = {"phase": self.phase(), "time": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        self._keep_lowest("gtt_margin", margin, self.cfg.gtt_min_margin_mib, when)
+        self._keep_lowest("mem_available", available, self.cfg.mem_available_min_mib, when)
+        if margin is not None and margin < self.cfg.gtt_min_margin_mib:
             reason, limit = "gtt_margin", self.cfg.gtt_min_margin_mib
         elif available is not None and available < self.cfg.mem_available_min_mib:
             reason, limit = "mem_available", self.cfg.mem_available_min_mib
         else:
             return None
         return {"reason": reason, "limit_mib": limit, "gtt_used_mib": used, "gtt_total_mib": total,
-                "mem_available_mib": available, "phase": self.phase(),
-                "time": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+                "mem_available_mib": available, **when}
+
+    def _keep_lowest(self, key: str, mib: int | None, limit: int, when: dict) -> None:
+        lowest = self.lowest[key]
+        if mib is not None and (lowest is None or mib < lowest["mib"]):
+            self.lowest[key] = {"mib": mib, "limit_mib": limit, **when}
 
     def _read(self, read: Reader) -> int | None:
         """A value that cannot be read is None: it does not trip the guard. The first one gives a warning."""

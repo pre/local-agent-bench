@@ -376,6 +376,22 @@ def _guard_trips(runs: list[Run]) -> list[str]:
     return ["", "The memory guard killed the server of these runs:", ""] + lines if lines else []
 
 
+def _guard_lowest(runs: list[Run]) -> list[str]:
+    """A line for each run with the lowest values of the memory guard of the last server
+    start. An older run.json and an external server have none."""
+    lines = [f"- `{run.id}`: GTT margin {_lowest(lowest['gtt_margin'])},"
+             f" MemAvailable {_lowest(lowest['mem_available'])}."
+             for run in runs if (lowest := run.info.get("memory_guard_lowest"))]
+    return ["", "The memory guard ran in these runs. The lowest values that the memory guard read after the last"
+            " server start of the run, with the limit, the phase and the time:", ""] + lines if lines else []
+
+
+def _lowest(value: dict | None) -> str:
+    if value is None:  # the guard could not read the value
+        return "n/a"
+    return f"{value['mib']} MiB (limit {value['limit_mib']} MiB, {value['phase']}, {value['time']})"
+
+
 def _matrix_cell(trials: list[dict]) -> str:
     if not trials:
         return "-"
@@ -474,11 +490,11 @@ def _probes(runs: list[Run]) -> list[str]:
 def render_report(runs: list[Run]) -> str:
     lines = ["# Evaluation report", ""] + _runs_section(runs)
     rows = config_stats(runs)
-    trips = _guard_trips(runs)
+    guard = _guard_trips(runs) + _guard_lowest(runs)
     if rows:
-        lines += [""] + _config_table(rows) + [""] + _memory_table(rows) + trips + [""] + _matrix(rows) + [""] + \
+        lines += [""] + _config_table(rows) + [""] + _memory_table(rows) + guard + [""] + _matrix(rows) + [""] + \
             _failures(rows) + [""] + _limits(rows)
     else:
-        lines += ["", "No trial results."] + (["", "## Memory"] + trips if trips else [])
+        lines += ["", "No trial results."] + (["", "## Memory"] + guard if guard else [])
     lines += _probes(runs)
     return "\n".join(lines) + "\n"

@@ -295,6 +295,8 @@ def test_interrupt_before_run_json_tells_how_to_start_again(root, fake, monkeypa
 
 TRIP = {"reason": "gtt_margin", "limit_mib": 4096, "gtt_used_mib": 109000, "gtt_total_mib": 112640,
         "mem_available_mib": 20000, "phase": "trial t1-r1", "time": "2026-11-23T02:00:00+00:00"}
+LOWEST = {"gtt_margin": {"mib": 3640, "limit_mib": 4096, "phase": "trial t1-r1", "time": "2026-11-23T02:00:00+00:00"},
+          "mem_available": {"mib": 18000, "limit_mib": 2048, "phase": "start", "time": "2026-11-23T01:00:00+00:00"}}
 
 
 @pytest.fixture
@@ -314,7 +316,7 @@ def servers(monkeypatch):
 def trip(server, phase: str) -> None:
     """What the memory guard of a managed server does, for an external server of a test."""
     assert server.phase == phase
-    server.guard = SimpleNamespace(trip={**TRIP, "phase": phase})
+    server.guard = SimpleNamespace(trip={**TRIP, "phase": phase}, lowest=LOWEST)
     send_guard_signal()
 
 
@@ -340,7 +342,9 @@ def test_memory_guard_stops_its_configuration_and_the_next_runs(root, fake, serv
 
     assert code == cli.GUARD_EXIT == 3
     dirs = run_dirs(root)
-    assert json.loads((dirs["local-test"] / "run.json").read_text())["memory_guard"] == TRIP
+    info = json.loads((dirs["local-test"] / "run.json").read_text())
+    assert info["memory_guard"] == TRIP
+    assert info["memory_guard_lowest"] == LOWEST
     assert not (dirs["local-test"] / "t1-r1" / "result.json").exists()
     assert (dirs["other"] / "t1-r1" / "result.json").exists()
     assert "memory_guard" not in json.loads((dirs["other"] / "run.json").read_text())
@@ -378,7 +382,7 @@ def test_memory_guard_before_run_json_tells_how_to_start_again(root, fake, serve
 
 def test_stop_signal_after_a_guard_trip_records_the_trip(root, fake, servers, monkeypatch, capsys):
     def interrupt(ctx, *args):
-        ctx.server.guard = SimpleNamespace(trip=TRIP)
+        ctx.server.guard = SimpleNamespace(trip=TRIP, lowest=LOWEST)
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cli, "execute_run", interrupt)
@@ -386,14 +390,58 @@ def test_stop_signal_after_a_guard_trip_records_the_trip(root, fake, servers, mo
 
     assert run(root, "--config", str(root / "c.toml"), "--out", str(out)) == 130
 
-    assert json.loads((out / "run.json").read_text())["memory_guard"] == TRIP
+    info = json.loads((out / "run.json").read_text())
+    assert info["memory_guard"] == TRIP
+    assert info["memory_guard_lowest"] == LOWEST
     assert f"interrupted. To continue: llm-eval run --resume {out}" in capsys.readouterr().err
+
+
+def test_run_records_the_lowest_values_of_the_memory_guard_without_a_trip(root, fake, monkeypatch):
+    def check_health(server):
+        server.guard = SimpleNamespace(trip=None, lowest=LOWEST)
+
+    monkeypatch.setattr(ExternalServer, "check_health", check_health)
+    out = root / "o"
+
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out)) == 0
+
+    info = json.loads((out / "run.json").read_text())
+    assert info["memory_guard_lowest"] == LOWEST
+    assert "memory_guard" not in info
+    assert (out / "t1-r1" / "result.json").exists()
+
+
+def test_resume_replaces_the_lowest_values_of_the_memory_guard_and_keeps_the_trip(root, fake, servers, monkeypatch):
+    agent = fake.behaviours["agent"]
+
+    def agent_with_a_trip(spec, mounts):
+        if len(servers) == 1:
+            trip(servers[0], "trial t1-r1")
+        return agent(spec, mounts)
+
+    fake.behaviours["agent"] = agent_with_a_trip
+    out = root / "o"
+    assert run(root, "--config", str(root / "c.toml"), "--out", str(out)) == cli.GUARD_EXIT
+    assert json.loads((out / "run.json").read_text())["memory_guard_lowest"] == LOWEST
+    higher ={"gtt_margin": {**LOWEST["gtt_margin"], "mib": 50000}, "mem_available": None}
+
+    def check_health(server):
+        server.guard = SimpleNamespace(trip=None, lowest=higher)
+
+    monkeypatch.setattr(ExternalServer, "check_health", check_health)
+
+    assert run(root, "--resume", str(out)) == 0
+
+    info = json.loads((out / "run.json").read_text())
+    assert info["memory_guard"] == TRIP  # the trip of the first start
+    assert info["memory_guard_lowest"] == higher  # the last start, also with higher values
 
 
 def test_external_server_has_no_memory_guard(root, fake, servers):
     assert run(root, "--config", str(root / "c.toml"), "--out", str(root / "o")) == 0
 
     assert servers[0].guard is None
+    assert "memory_guard_lowest" not in json.loads((root / "o" / "run.json").read_text())
 
 
 def test_stop_signal_during_the_cleanup_of_a_guard_trip(root, fake, servers, monkeypatch, capsys):

@@ -39,16 +39,31 @@ def server_podman() -> FakePodman:
     return podman
 
 
-def make_guard(tmp_path: Path, podman, readings: Readings, margin=4096, minimum=2048) -> MemoryGuard:
+def make_guard(tmp_path: Path, podman, readings: Readings, margin=4096, minimum=2048,
+               phase=lambda: "trial t1-r1") -> MemoryGuard:
     cfg = ManagedConfig(image="example.org/llama@sha256:abc", models_dir=tmp_path, model_file="m.gguf", port=1,
                         gtt_min_margin_mib=margin, mem_available_min_mib=minimum)
-    return MemoryGuard(podman, tmp_path / "run", cfg, lambda: "trial t1-r1", readings.reader("gtt_used"),
+    return MemoryGuard(podman, tmp_path / "run", cfg, phase, readings.reader("gtt_used"),
                        readings.reader("gtt_total"), readings.reader("mem_available"), interval_s=0.01)
+
+
+START = ("llm-eval: the memory guard started. It reads the memory each 0.01 s and kills llm-eval-server when GTT"
+         " total minus GTT used is less than server.gtt_min_margin_mib = 4096 MiB or MemAvailable is less than"
+         " server.mem_available_min_mib = 2048 MiB.")
 
 
 def run_log(tmp_path: Path) -> str:
     path = tmp_path / "run" / "run.log"
     return path.read_text() if path.exists() else ""
+
+
+def log_lines(tmp_path: Path) -> list[str]:
+    """The lines of run.log without the time."""
+    return [line.split(" ", 1)[1] for line in run_log(tmp_path).splitlines()]
+
+
+def lowest_mib(guard: MemoryGuard, key: str) -> int | None:
+    return (guard.lowest[key] or {}).get("mib")
 
 
 def wait_for(condition, timeout_s: float = 5.0) -> None:
@@ -79,6 +94,8 @@ def test_guard_kills_the_server_when_the_gtt_margin_is_lost(tmp_path, capsys):
     assert podman.containers[NAME]["running"] is False
     assert guard.trip == {"reason": "gtt_margin", "limit_mib": 4096, "gtt_used_mib": 109000, "gtt_total_mib": 112640,
                           "mem_available_mib": 30000, "phase": "trial t1-r1", "time": ANY}
+    assert guard.lowest["gtt_margin"] == {"mib": 3640, "limit_mib": 4096, "phase": "trial t1-r1",
+                                          "time": guard.trip["time"]}
     message = ("llm-eval: MEMORY GUARD: GTT used is 109000 MiB of 112640 MiB, less free than"
                " server.gtt_min_margin_mib = 4096 MiB (trial t1-r1). The harness killed llm-eval-server.")
     assert message in run_log(tmp_path)
@@ -116,7 +133,31 @@ def test_guard_does_not_trip_at_the_limits(tmp_path):
     assert guard.trip is None
     assert podman.calls == []
     assert not guard.thread.is_alive()
-    assert run_log(tmp_path) == ""
+    assert log_lines(tmp_path) == [START]
+
+
+def test_guard_records_its_start_and_the_lowest_values_without_a_trip(tmp_path, capsys):
+    podman, readings, phase = server_podman(), Readings(), {"now": "probes"}
+    guard = make_guard(tmp_path, podman, readings, phase=lambda: phase["now"])
+    with stop_on_signals():
+        guard.start()
+        try:
+            readings.values["gtt_used"] = 100000  # 12640 MiB free
+            wait_for(lambda: lowest_mib(guard, "gtt_margin") == 12640)
+            phase["now"] = "trial t1-r1"
+            readings.values.update(gtt_used=60000, mem_available=5000)
+            wait_for(lambda: lowest_mib(guard, "mem_available") == 5000)
+            phase["now"] = "between trials"
+            readings.values["mem_available"] = 9000
+            time.sleep(0.05)
+        finally:
+            guard.stop()
+
+    assert guard.trip is None
+    assert guard.lowest == {"gtt_margin": {"mib": 12640, "limit_mib": 4096, "phase": "probes", "time": ANY},
+                            "mem_available": {"mib": 5000, "limit_mib": 2048, "phase": "trial t1-r1", "time": ANY}}
+    assert log_lines(tmp_path) == [START]
+    assert START in capsys.readouterr().err
 
 
 def test_zero_switches_off_the_mem_available_limit(tmp_path):
@@ -151,6 +192,8 @@ def test_unreadable_gtt_gives_one_warning_and_no_trip(tmp_path):
     assert "the memory guard cannot read a memory value: [Errno 5] Input/output error" in log
     assert guard.trip["reason"] == "mem_available"
     assert guard.trip["gtt_used_mib"] is None
+    assert guard.lowest["gtt_margin"] is None
+    assert lowest_mib(guard, "mem_available") == 1000
 
 
 def test_read_mem_available(host):

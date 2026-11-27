@@ -417,10 +417,38 @@ def test_memory_section_names_the_runs_that_the_memory_guard_stopped(tmp_path):
 
 def test_memory_guard_of_a_run_without_trial_results(tmp_path):
     guard = {**GUARD, "reason": "mem_available", "limit_mib": 2048, "mem_available_mib": 1500, "phase": "probes"}
-    run = load_run(write_run(tmp_path / "r", [], tasks=["t1"], finished=False, server=MANAGED, memory_guard=guard))
+    lowest = {**LOWEST, "mem_available": {**LOWEST["mem_available"], "mib": 1500, "phase": "probes"}}
+    run = load_run(write_run(tmp_path / "r", [], tasks=["t1"], finished=False, server=MANAGED, memory_guard=guard,
+                             memory_guard_lowest=lowest))
 
     text = render_report([run])
 
     assert "No trial results." in text
     assert ("## Memory\n\nThe memory guard killed the server of these runs:\n\n- `r`, 2026-11-24T02:14:07+00:00,"
             " probes: MemAvailable is 1500 MiB, less than server.mem_available_min_mib = 2048 MiB.") in text
+    assert ("- `r`: GTT margin 14891 MiB (limit 4096 MiB, trial t2-r1, 2026-11-27T03:01:02+00:00),"
+            " MemAvailable 1500 MiB") in text
+
+
+LOWEST = {"gtt_margin": {"mib": 14891, "limit_mib": 4096, "phase": "trial t2-r1", "time": "2026-11-27T03:01:02+00:00"},
+          "mem_available": {"mib": 15696, "limit_mib": 2048, "phase": "between trials",
+                            "time": "2026-11-27T01:00:00+00:00"}}
+
+
+def test_memory_section_has_the_lowest_values_of_the_memory_guard(tmp_path):
+    t1 = [trial("t1", memory=memory(84000, 30000, 8000))]
+    guarded = write_run(tmp_path / "guarded", t1, server=MANAGED, memory_guard_lowest=LOWEST)
+    unread = write_run(tmp_path / "unread", t1, server=MANAGED, memory_guard_lowest={**LOWEST, "gtt_margin": None})
+    old = write_run(tmp_path / "old", t1, server=MANAGED)
+
+    text = render_report([load_run(guarded), load_run(unread), load_run(old)])
+
+    memory_section = text.split("## Memory", 1)[1].split("\n## ", 1)[0]
+    assert ("\n\nThe memory guard ran in these runs. The lowest values that the memory guard read after the last"
+            " server start of the run, with the limit, the phase and the time:\n\n"
+            "- `guarded`: GTT margin 14891 MiB (limit 4096 MiB, trial t2-r1, 2026-11-27T03:01:02+00:00),"
+            " MemAvailable 15696 MiB (limit 2048 MiB, between trials, 2026-11-27T01:00:00+00:00).\n"
+            "- `unread`: GTT margin n/a, MemAvailable 15696 MiB (limit 2048 MiB, between trials,"
+            " 2026-11-27T01:00:00+00:00).\n") in memory_section
+    assert "`old`" not in memory_section
+    assert "killed the server" not in memory_section

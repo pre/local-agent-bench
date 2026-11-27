@@ -212,28 +212,31 @@ def run_plan(plan: RunPlan, podman, scratch: Path, args: argparse.Namespace) -> 
         print(f"llm-eval: {plan.config.name}: {e}", file=sys.stderr)
         return 1
     except GuardStop:
-        record_guard_trip(out_dir, server.guard.trip)
+        record_guard(out_dir, "memory_guard", server.guard.trip)
         notice(out_dir, f"llm-eval: {plan.config.name}: the memory guard stopped the run of this configuration."
                         f" The trial in progress has no result. {next_command(plan, args, out_dir)}")
         end_guard_stop()  # a stop signal of the cleanup raises KeyboardInterrupt here: cmd_run gives 130
         return GUARD_EXIT
     except KeyboardInterrupt:
         if server.guard and server.guard.trip:  # the guard tripped during the cleanup of the stop, or before it
-            record_guard_trip(out_dir, server.guard.trip)
+            record_guard(out_dir, "memory_guard", server.guard.trip)
         notice(out_dir, f"llm-eval: interrupted. {next_command(plan, args, out_dir)}")
         raise
+    finally:
+        if server.guard:  # the guard stopped with the server
+            record_guard(out_dir, "memory_guard_lowest", server.guard.lowest)
     passed = sum(r["passed"] for r in results)
     print(f"results: {out_dir}  passed {passed}/{len(results)}")
     return 0
 
 
-def record_guard_trip(out_dir: Path, trip: dict) -> None:
-    """Write the trip of the memory guard to run.json. Before run.json exists, the
-    record is only the message in run.log."""
+def record_guard(out_dir: Path, key: str, value: dict) -> None:
+    """Write a record of the memory guard to run.json. Before run.json exists, only
+    the messages of the guard in run.log are a record."""
     run_file = out_dir / "run.json"
     if run_file.exists():
         info = json.loads(run_file.read_text())
-        info["memory_guard"] = trip
+        info[key] = value
         write_json(run_file, info)
 
 

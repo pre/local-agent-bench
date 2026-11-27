@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from unittest.mock import ANY
 
 import pytest
 
@@ -325,6 +326,23 @@ def assert_guard_stopped_the_run(h: Harness, proc: subprocess.Popen, tripped: fl
     guard = json.loads((h.out / "run.json").read_text())["memory_guard"]
     assert guard["phase"] == phase
     assert "MEMORY GUARD: " in (h.out / "run.log").read_text()
+
+
+def test_memory_guard_records_its_start_and_the_lowest_values_of_a_run_without_a_trip(harness, tmp_path):
+    harness.guard_on_a_fake_host(tmp_path)
+    harness.env["FAKE_PODMAN_AGENT_S"] = "0"
+
+    proc = harness.start()
+
+    assert proc.wait(timeout=60) == 0
+    lowest = json.loads((harness.out / "run.json").read_text())["memory_guard_lowest"]
+    assert lowest == {"gtt_margin": {"mib": 112640 - 50000, "limit_mib": 4096, "phase": "start", "time": ANY},
+                      "mem_available": {"mib": 30000, "limit_mib": 2048, "phase": "start", "time": ANY}}
+    run_log = (harness.out / "run.log").read_text()
+    assert ("llm-eval: the memory guard started. It reads the memory each 0.05 s and kills llm-eval-server when"
+            " GTT total minus GTT used is less than server.gtt_min_margin_mib = 4096 MiB") in run_log
+    assert run_log.count("the memory guard started") == 1
+    assert "MEMORY GUARD" not in run_log
 
 
 def test_memory_guard_kills_the_server_during_a_trial(harness, tmp_path):

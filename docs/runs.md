@@ -47,8 +47,10 @@ The default run directory is `~/daybook-evidence/local-llm/eval/<run-id>/`, wher
 ```
 <run-id>/
   run.json                 configuration values, server values, image, Claude Code version, tasks,
-                           memory_guard after a trip of the memory guard (see server-control.md)
-  run.log                  one progress line for each trial
+                           memory_guard after a trip of the memory guard, memory_guard_lowest
+                           (see server-control.md)
+  run.log                  one progress line for each trial, the messages of the server stop,
+                           of the probe gate and of the memory guard (also its start line)
   server.log               the full log of a managed server
   probes/                  only with run --probe (see probes.md)
     protocol.json          the protocol probe
