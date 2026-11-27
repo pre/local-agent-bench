@@ -73,7 +73,7 @@ The protocol probe sends a fixed list of small requests to `/v1/messages`, the e
 | Case | Request | Assertion |
 |---|---|---|
 | `plain` | One user message | The text has the requested word |
-| `two_system_blocks` | Two system blocks at the start | The text has the codes of the two blocks. A hyphen character such as U+2011 (non-breaking hyphen) counts as "-" |
+| `two_system_blocks` | Two system blocks at the start | The text has the codes of the two blocks (`KIWI-17`, `ZEBRA-42`). A hyphen character such as U+2011 (non-breaking hyphen) counts as "-". The case fails when a code is in the text more than one time or the text has a `<think>` or `</think>` tag, and the note then starts with "the codes are in the text, but also reasoning". Reasoning that leaked into the text block usually names a code again or has a think tag. The check finds only these two signs |
 | `system_in_middle` | A system message in the middle of the conversation | The answer has the code of the system message (`LIME-93`) and no word of a refusal or a doubt (`not`, `can't`, `cannot`, `unsure`, `maybe`, a question mark and some more). A `<think>` section does not count. A refusal that names the code fails, and its note starts with "the code is in the text, but with refusal or doubt". The original chat template of Qwen3.8 gave HTTP 500 "System message must be at the beginning". The gate stops the trials only on an HTTP error of this case |
 | `tool_call` | A question that needs a tool | A `tool_use` block, the input agrees with the schema |
 | `tool_round_trip` | Assistant `tool_use`, user `tool_result` | The final text uses the tool result |
@@ -88,6 +88,8 @@ The protocol probe sends a fixed list of small requests to `/v1/messages`, the e
 | `count_tokens` | `/v1/messages/count_tokens` | `input_tokens` is a positive integer |
 
 To add a case, add one `Case` entry to `CASES` in `src/llm_eval/probe.py`: a name, a description, the request body and a check function.
+
+`plain` and `tool_round_trip` look only for the expected word in the text. Thus they pass also when reasoning leaked into the text. They are gate cases, and a leak is a matter of quality: it does not make each trial fail.
 
 `protocol.json` has the same header as `speed.json` (`schema`, `kind`, `base_url`, `model`, `config`, `server`, `started_at`, `finished_at`) and:
 
@@ -105,3 +107,12 @@ To add a case, add one `Case` entry to `CASES` in `src/llm_eval/probe.py`: a nam
 ```
 
 `response` is the first 1500 characters of the response body, or a short list of the event types of a stream. `error` is the network error, or the HTTP status and the start of the body when the status is not 200.
+
+### Changes of the assertions
+
+`protocol.json` keeps the verdict of the harness version of its run, and `report` does not check the answers again. These changes make a verdict not comparable with the verdict of an older run:
+
+| Date | Change |
+|---|---|
+| 2026-11-20 | `two_system_blocks` accepts the hyphen characters of a model. `system_in_middle` fails a refusal or a doubt that names the code |
+| 2026-11-27 | `two_system_blocks` fails when a code is in the text more than one time or the text has a think tag |

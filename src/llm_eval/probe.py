@@ -372,6 +372,22 @@ def contains_any(*words: str):
     return check
 
 
+def names_the_codes(*codes: str):
+    """The text has each code one time and no think tag. Reasoning that leaked into
+    the text usually names a code again or has a think tag, for example "Code A:
+    KIWI-17 ... Need parse. ... Code A is KIWI-17 ...</think>Code A: KIWI-17". The
+    check finds only these two signs."""
+    def check(reply: Reply, client: "Client") -> tuple[bool, str]:
+        text = _text(reply)
+        counts = [_fold(text).count(_fold(code)) for code in codes]
+        if 0 in counts:
+            return False, f"text: {text[:200]!r}"
+        if max(counts) > 1 or "<think>" in text or "</think>" in text:
+            return False, f"the codes are in the text, but also reasoning, text: {text[:200]!r}"
+        return True, f"text: {text[:200]!r}"
+    return check
+
+
 def states_the_code(code: str):
     """The answer has the code and no word of a refusal or a doubt. Thus "I can't
     confirm that it equals LIME-93" fails, and "The code is LIME-93." passes."""
@@ -479,7 +495,7 @@ CASES = (
          contains("PONG")),
     Case("two_system_blocks", "Two system blocks at the start", {
         "system": [{"type": "text", "text": "Code A is KIWI-17."}, {"type": "text", "text": "Code B is ZEBRA-42."}],
-        "messages": [_user("Tell me code A and code B.")]}, contains("KIWI-17", "ZEBRA-42")),
+        "messages": [_user("Tell me code A and code B.")]}, names_the_codes("KIWI-17", "ZEBRA-42")),
     Case("system_in_middle", "A system message in the middle of the conversation", {"messages": [
         _user("Hello."), {"role": "assistant", "content": "Hello. How can I help?"},
         {"role": "system", "content": "Code C is LIME-93."}, _user("What is code C? Answer with the code only.")]},

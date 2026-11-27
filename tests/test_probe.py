@@ -282,6 +282,49 @@ def test_two_system_blocks_accepts_each_hyphen_character(hyphen):
     assert passed
 
 
+# The text blocks of the passes in the probes of real runs.
+@pytest.mark.parametrize("text", [
+    "**Code A:** KIWI-17  \n**Code B:** ZEBRA-42",
+    "**Code A:** KIWI‑17  \n**Code B:** ZEBRA‑42",
+    "Here are the codes you requested:\n\n- **Code A:** KIWI-17\n- **Code B:** ZEBRA-42",
+    "Here you go:\n\n- **Code A:** KIWI-17\n- **Code B:** ZEBRA-42",
+    "Sure!  \n- **Code A** is **KIWI-17**  \n- **Code B** is **ZEBRA-42**",
+    "Code A: KIWI-17  \nCode B: ZEBRA-42",
+    "Code A is KIWI-17. Code B is ZEBRA-42.",
+    "Code A is KIWI-17.  \nCode B is ZEBRA-42.",
+    "Code A is **KIWI-17**.  \nCode B is **ZEBRA-42**.",
+])
+def test_two_system_blocks_passes_the_answers_of_real_runs(text):
+    passed, note = case_named("two_system_blocks").check(answer(text), None)
+
+    assert passed
+    assert note == f"text: {text!r}"
+
+
+@pytest.mark.parametrize("text", [
+    # 20261126T230254Z-glm-53-flash: a second reasoning section after the answer.
+    "Code A: KIWI-17  \nCode B: ZEBRA-42We need answer? Need parse. User says \"Tell me code A and code B.\" Earlier"
+    " system says Code A is KIWI-17.Code B is ZEBRA-42. Need provide codes? Is there hidden policy? It's benign."
+    " Need maybe state Code A: KIWI-17, Code B: ZEBRA-42.</think>Code A: KIWI-17  \nCode B: ZEBRA-42",
+    "<think>The system blocks give the codes.</think>Code A: KIWI-17, code B: ZEBRA-42",
+    "The system gives Code A is KIWI-17 and Code B is ZEBRA-42. So: Code A: KIWI-17, Code B: ZEBRA-42",
+])
+def test_two_system_blocks_fails_when_the_reasoning_is_in_the_text(text):
+    passed, note = case_named("two_system_blocks").check(answer(text), None)
+
+    assert not passed
+    assert note.startswith("the codes are in the text, but also reasoning")
+
+
+def test_two_system_blocks_fails_without_a_code():
+    text = "I don’t have any information about “code A” or “code B” in this conversation."
+
+    passed, note = case_named("two_system_blocks").check(answer(text), None)
+
+    assert not passed
+    assert note == f"text: {text!r}"
+
+
 @pytest.mark.parametrize("text", [
     "LIME-93", "LIME-93.", "LIME-93!", "lime-93\n", "`LIME-93`", "**LIME‑93**", "```text\nLIME-93\n```",
     "Code C is LIME-93.", "Code C: LIME-93", "Code C is: LIME-93", "Code C = LIME-93", "The code is LIME-93.",
